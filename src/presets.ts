@@ -1,6 +1,8 @@
 export type Token = { token: string; hex: string; source: string };
 export type Preset = { id: string; name: string; colour: Token; background: Token; accent: Token };
 export type Swatch = { name: string; token: string; hex: string };
+export type ColourRole = "colour" | "accent";
+export type ColourSwatch = Swatch & { roles: ColourRole[] };
 
 const ZEST = "zest/packages/ui/src/styles/globals.css";
 const SELEKT = "selekt-2/apps/desktop/src/styles/tokens.css";
@@ -42,8 +44,13 @@ const swatch = (preset: Preset, role: "colour" | "background" | "accent"): Swatc
   hex: preset[role].hex,
 });
 
-export const COLOUR_SWATCHES: Swatch[] = PRESETS.flatMap((preset) =>
-  preset.accent.hex === preset.colour.hex ? [swatch(preset, "colour")] : [swatch(preset, "colour"), swatch(preset, "accent")],
+export const COLOUR_SWATCHES: ColourSwatch[] = PRESETS.flatMap((preset) =>
+  preset.accent.hex === preset.colour.hex
+    ? [{ ...swatch(preset, "colour"), roles: ["colour", "accent"] }]
+    : [
+        { ...swatch(preset, "colour"), roles: ["colour"] },
+        { ...swatch(preset, "accent"), roles: ["accent"] },
+      ],
 );
 
 export const BACKGROUND_SWATCHES: Swatch[] = PRESETS.map((preset) => swatch(preset, "background"));

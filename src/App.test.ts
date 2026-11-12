@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { DEFAULT_LOOK, setLook } from "./look";
+import { DEFAULT_LOOK, getLook, setLook } from "./look";
 import { ERROR_NOT_SVG } from "./svgIcon";
 import type { Toast } from "./Viewport";
 
@@ -41,6 +41,12 @@ function mount() {
 beforeEach(() => {
   reducedMotion = false;
   setLook(DEFAULT_LOOK);
+  HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close ??= function (this: HTMLDialogElement) {
+    this.open = false;
+  };
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") && reducedMotion }));
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
@@ -153,6 +159,22 @@ describe("Look controls", () => {
     expect(backgrounds.slice(0, 4).every((name) => named.test(name ?? ""))).toBe(true);
     expect(backgrounds.slice(0, 4).map((name) => name?.slice(-7))).toEqual(["#ffffff", "#151311", "#0d0b07", "#e7e7e7"]);
     expect(backgrounds.slice(4)).toEqual(["Transparent"]);
+  });
+
+  it("applies an accent swatch to Accent and a colour swatch to the material colour", () => {
+    const pick = (name: string) => {
+      const swatch = [...container.querySelectorAll<HTMLButtonElement>(".colour-popover .swatch")].find((button) =>
+        button.getAttribute("aria-label")?.startsWith(name),
+      );
+      act(() => swatch?.click());
+    };
+    pick("Zest dark accent");
+    expect(getLook().accent).toBe("#ff815f");
+    expect(getLook().material.color).toBe("#060605");
+    pick("Zest dark colour");
+    expect(getLook().material.color).toBe("#f8f6f4");
+    expect(getLook().accent).toBe("#ff815f");
+    expect(container.querySelector(".colour-trigger")?.getAttribute("aria-label")).toBe("Colour, --color-ink-100 #f8f6f4");
   });
 
   it("starts with Spin off under reduced motion", () => {

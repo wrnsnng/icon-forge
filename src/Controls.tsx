@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent } from "react";
-import { updateLook, useLook, type Look } from "./look";
-import type { Swatch } from "./presets";
+import { getLook, setLook, updateLook, useLook, type Look } from "./look";
+import type { ColourSwatch, Swatch } from "./presets";
 
 type Section = "shape" | "material" | "lights" | "camera";
 type NumberKey<S extends Section> = { [K in keyof Look[S]]: Look[S][K] extends number ? K : never }[keyof Look[S]];
@@ -105,10 +105,21 @@ export function Toggle<T extends string>({
 
 const swatchName = (swatch: Swatch) => `${swatch.name} — ${swatch.token} ${swatch.hex}`;
 
-export function ColourPicker({ swatches }: { swatches: Swatch[] }) {
+const applySwatch = ({ hex, roles }: ColourSwatch) => {
+  const look = getLook();
+  setLook({
+    ...look,
+    material: roles.includes("colour") ? { ...look.material, color: hex } : look.material,
+    accent: roles.includes("accent") ? hex : look.accent,
+  });
+};
+
+export function ColourPicker({ swatches }: { swatches: ColourSwatch[] }) {
   const color = useLook((look) => look.material.color);
+  const accent = useLook((look) => look.accent);
   const dialog = useRef<HTMLDialogElement>(null);
-  const current = swatches.find((swatch) => swatch.hex === color);
+  const current = swatches.find((swatch) => swatch.roles.includes("colour") && swatch.hex === color);
+  const applied = (swatch: ColourSwatch) => swatch.roles.every((role) => (role === "colour" ? color : accent) === swatch.hex);
   const name = current ? `Colour, ${current.token} ${current.hex}` : `Colour, ${color}`;
   return (
     <div className="field">
@@ -124,11 +135,11 @@ export function ColourPicker({ swatches }: { swatches: Swatch[] }) {
             type="button"
             className="swatch"
             aria-label={swatchName(swatch)}
-            aria-pressed={swatch.hex === color}
+            aria-pressed={applied(swatch)}
             title={swatchName(swatch)}
             style={{ background: swatch.hex }}
             onClick={() => {
-              updateLook("material", { color: swatch.hex });
+              applySwatch(swatch);
               dialog.current?.close();
             }}
           />
