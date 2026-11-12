@@ -1,27 +1,22 @@
 import { Environment, OrbitControls, useProgress } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { Suspense } from "react";
-import { ExtrudeGeometry, Shape } from "three";
+import { Suspense, useEffect, useMemo } from "react";
+import { ExtrudeGeometry, type Shape } from "three";
 import { getLook, useLook } from "./look";
 
 const LOADING_LIGHTING = "Loading lighting…";
+const DROP_OVERLAY = "Drop SVG to load";
 const WEBGL_ERROR = "Icon Forge needs WebGL 2, which isn't available in this browser.";
 const CAMERA_DISTANCE = 3;
+const DEPTH_AT_100 = 0.2;
+const MAX_BEVEL = 0.04;
+const BEVEL_SEGMENTS = 6;
 
 const hasWebGL2 = (() => {
   const gl = document.createElement("canvas").getContext("webgl2");
   gl?.getExtension("WEBGL_lose_context")?.loseContext();
   return gl !== null;
 })();
-
-const square = new Shape().moveTo(-0.5, -0.5).lineTo(0.5, -0.5).lineTo(0.5, 0.5).lineTo(-0.5, 0.5).closePath();
-const placeholder = new ExtrudeGeometry(square, {
-  depth: 0.2,
-  bevelEnabled: true,
-  bevelSize: 0.012,
-  bevelThickness: 0.012,
-  bevelSegments: 6,
-}).center();
 
 function initialCameraPosition(): [number, number, number] {
   const { azimuth, elevation } = getLook().camera;
@@ -34,9 +29,31 @@ function initialCameraPosition(): [number, number, number] {
   ];
 }
 
-function Scene() {
+function Icon({ shapes }: { shapes: Shape[] }) {
+  const { scaleX, scaleY, depth, bevel } = useLook((look) => look.shape);
+  const geometry = useMemo(() => {
+    const size = (bevel / 100) * MAX_BEVEL;
+    return new ExtrudeGeometry(shapes, {
+      depth: (depth / 100) * DEPTH_AT_100,
+      bevelEnabled: size > 0,
+      bevelSize: size,
+      bevelThickness: size,
+      bevelSegments: BEVEL_SEGMENTS,
+    }).center();
+  }, [shapes, depth, bevel]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
   const color = useLook((look) => look.material.color);
   const roughness = useLook((look) => look.material.roughness);
+
+  return (
+    <mesh geometry={geometry} scale={[scaleX / 100, scaleY / 100, 1]}>
+      <meshPhysicalMaterial color={color} roughness={roughness} metalness={0} />
+    </mesh>
+  );
+}
+
+function Scene({ shapes }: { shapes: Shape[] }) {
   const background = useLook((look) => look.camera.background);
 
   return (
@@ -44,16 +61,14 @@ function Scene() {
       {background !== "transparent" && <color attach="background" args={[background]} />}
       <Suspense fallback={null}>
         <Environment files="/hdri/studio_small_09_1k.hdr" />
-        <mesh geometry={placeholder}>
-          <meshPhysicalMaterial color={color} roughness={roughness} metalness={0} />
-        </mesh>
+        <Icon shapes={shapes} />
       </Suspense>
       <OrbitControls makeDefault enablePan={false} />
     </>
   );
 }
 
-export function Viewport() {
+export function Viewport({ shapes, dragging, toast }: { shapes: Shape[]; dragging: boolean; toast: string | null }) {
   const loading = useProgress((state) => state.active);
 
   if (!hasWebGL2) {
@@ -66,9 +81,15 @@ export function Viewport() {
   return (
     <div className="viewport">
       <Canvas camera={{ fov: 30, position: initialCameraPosition() }}>
-        <Scene />
+        <Scene shapes={shapes} />
       </Canvas>
       {loading && <div className="viewport-status">{LOADING_LIGHTING}</div>}
+      {dragging && <div className="viewport-drop">{DROP_OVERLAY}</div>}
+      {toast && (
+        <div className="toast" role="alert">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

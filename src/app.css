@@ -103,3 +103,67 @@ body {
     border-top: 1px solid var(--color-ink-200);
   }
 }
+
+.viewport-drop {
+  position: absolute;
+  inset: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--color-ink-600);
+  border: 2px dashed var(--color-ink-600);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.toast {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  color: var(--color-ink-0);
+  background: var(--color-ink-900);
+  border-radius: 8px;
+  font-size: 13px;
+  animation: toast-in 160ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.field label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.field output {
+  color: var(--color-ink-600);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-section button {
+  margin-top: 12px;
+}
+
+.helper {
+  margin: 4px 0 0;
+  color: var(--color-ink-600);
+  font-size: 12px;
+}
