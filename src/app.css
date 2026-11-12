@@ -103,3 +103,137 @@ body {
     border-top: 1px solid var(--color-ink-200);
   }
 }
+
+.viewport-drop {
+  position: absolute;
+  inset: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--color-ink-600);
+  background: rgb(255 255 255 / 0.9);
+  border: 2px dashed var(--color-ink-600);
+  border-radius: 12px;
+  pointer-events: none;
+}
+
+.toast {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  color: var(--color-ink-0);
+  background: var(--color-ink-900);
+  border-radius: 8px;
+  font-size: 13px;
+  animation: toast-in 160ms ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.field label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+
+.field output {
+  color: var(--color-ink-600);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel select,
+.panel button {
+  height: 32px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--color-ink-900);
+  background: var(--color-ink-0);
+  border: 1px solid var(--color-ink-600);
+  border-radius: 6px;
+  appearance: none;
+}
+
+.panel select {
+  width: 100%;
+  padding-right: 32px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-ink-900) 50%),
+    linear-gradient(135deg, var(--color-ink-900) 50%, transparent 50%);
+  background-position:
+    right 16px center,
+    right 11px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.panel button {
+  cursor: pointer;
+}
+
+.panel input[type="range"] {
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  accent-color: var(--color-ink-900);
+  appearance: none;
+}
+
+.panel input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--color-ink-600);
+  border-radius: 1px;
+}
+
+.panel input[type="range"]::-moz-range-track {
+  height: 2px;
+  background: var(--color-ink-600);
+  border-radius: 1px;
+}
+
+.panel input[type="range"]::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
+  background: var(--color-ink-900);
+  border: none;
+  border-radius: 50%;
+  appearance: none;
+}
+
+.panel input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--color-ink-900);
+  border: none;
+  border-radius: 50%;
+}
+
+.panel-section button {
+  margin-top: 12px;
+}
+
+.helper {
+  margin: 4px 0 0;
+  color: var(--color-ink-600);
+  font-size: 12px;
+}
