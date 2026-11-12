@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_LOOK } from "./look";
 import { buildIcon } from "./svgIcon";
-import { extrusionOptions, iconGeometry } from "./Viewport";
+import { bulgedGeometry, cushion, extrusionOptions, flatGeometry } from "./Viewport";
 
 const svg = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${body}</svg>`;
 
@@ -45,15 +45,15 @@ describe("extrusionOptions", () => {
   });
 });
 
-describe("iconGeometry bulge", () => {
+describe("bulge geometry", () => {
   const square = () => {
     const result = buildIcon(svg('<rect x="0" y="0" width="24" height="24"/>'));
     if (!result.ok) throw new Error(result.error);
     return result;
   };
-  const shape = (bulge: number) => ({ depth: 100, bevel: 0, bulge });
+  const shape = { depth: 100, bevel: 0 };
   const thickness = (bulge: number) => {
-    const geometry = iconGeometry(square(), shape(bulge));
+    const geometry = bulge === 0 ? flatGeometry(square(), shape) : bulgedGeometry(cushion(square(), shape), bulge);
     geometry.computeBoundingBox();
     const box = geometry.boundingBox;
     if (!box) throw new Error("No bounding box");

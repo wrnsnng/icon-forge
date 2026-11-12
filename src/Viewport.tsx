@@ -130,11 +130,11 @@ function outlineDistance(segments: [Vector2, Vector2][]): (x: number, y: number)
 
 type Cushion = { caps: BufferGeometry; sides: BufferGeometry; lift: Float32Array };
 
-function flatGeometry(icon: IconGeometry, shape: Pick<Look["shape"], "depth" | "bevel">): BufferGeometry {
+export function flatGeometry(icon: IconGeometry, shape: Pick<Look["shape"], "depth" | "bevel">): BufferGeometry {
   return new ExtrudeGeometry(icon.shapes, extrusionOptions(shape, icon.thinnest)).center();
 }
 
-function cushion(icon: IconGeometry, shape: Pick<Look["shape"], "depth" | "bevel">): Cushion {
+export function cushion(icon: IconGeometry, shape: Pick<Look["shape"], "depth" | "bevel">): Cushion {
   const extruded = new ExtrudeGeometry(icon.shapes, extrusionOptions(shape, icon.thinnest));
   extruded.computeBoundingBox();
   const centre = extruded.boundingBox?.getCenter(new Vector3()) ?? new Vector3();
@@ -150,7 +150,7 @@ function cushion(icon: IconGeometry, shape: Pick<Look["shape"], "depth" | "bevel
   return { caps, sides, lift };
 }
 
-function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): BufferGeometry {
+export function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): BufferGeometry {
   const height = (bulge / 100) * BULGE_HEIGHT;
   const swollen = caps.clone();
   const position = swollen.getAttribute("position");
@@ -159,10 +159,6 @@ function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): BufferGe
   const merged = mergeGeometries([swollen.toNonIndexed(), sides], true);
   swollen.dispose();
   return merged;
-}
-
-export function iconGeometry(icon: IconGeometry, shape: Pick<Look["shape"], "depth" | "bevel" | "bulge">): BufferGeometry {
-  return shape.bulge === 0 ? flatGeometry(icon, shape) : bulgedGeometry(cushion(icon, shape), shape.bulge);
 }
 
 function IconMaterial() {
