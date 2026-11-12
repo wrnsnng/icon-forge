@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent } from "react";
 import { getLook, setLook, updateLook, useLook, type Look } from "./look";
-import type { ColourSwatch, Swatch } from "./presets";
+import { PRESETS, type ColourSwatch, type Preset, type Swatch } from "./presets";
 
 type Section = "shape" | "material" | "lights" | "camera";
 type NumberKey<S extends Section> = { [K in keyof Look[S]]: Look[S][K] extends number ? K : never }[keyof Look[S]];
@@ -109,6 +109,7 @@ const applySwatch = ({ hex, roles }: ColourSwatch) => {
   const look = getLook();
   setLook({
     ...look,
+    preset: "custom",
     material: roles.includes("colour") ? { ...look.material, color: hex } : look.material,
     accent: roles.includes("accent") ? hex : look.accent,
   });
@@ -169,10 +170,45 @@ export function BackgroundPicker({ swatches }: { swatches: Swatch[] }) {
             className="visually-hidden"
             aria-label={option.label}
             checked={background === option.value}
-            onChange={() => updateLook("camera", { background: option.value })}
+            onChange={() => {
+              const look = getLook();
+              setLook({ ...look, preset: "custom", camera: { ...look.camera, background: option.value } });
+            }}
           />
         </label>
       ))}
     </fieldset>
+  );
+}
+
+const PRESET_OPTIONS: Preset["id"][] = ["zest-light", "zest-dark", "selekt-light", "selekt-dark"];
+
+const applyPreset = (id: Look["preset"]) => {
+  const preset = PRESETS.find((candidate) => candidate.id === id);
+  if (!preset) return;
+  const look = getLook();
+  setLook({
+    ...look,
+    preset: preset.id,
+    material: { ...look.material, color: preset.colour.hex },
+    accent: preset.accent.hex,
+    camera: { ...look.camera, background: preset.background.hex },
+  });
+};
+
+export function PresetPicker() {
+  const preset = useLook((look) => look.preset);
+  return (
+    <div className="field">
+      <label htmlFor="preset-select">Design system</label>
+      <select id="preset-select" value={preset} onChange={(event) => applyPreset(event.target.value as Look["preset"])}>
+        {PRESET_OPTIONS.map((id) => (
+          <option key={id} value={id}>
+            {PRESETS.find((candidate) => candidate.id === id)?.name}
+          </option>
+        ))}
+        <option value="custom">Custom</option>
+      </select>
+    </div>
   );
 }
