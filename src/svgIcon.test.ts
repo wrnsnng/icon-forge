@@ -82,6 +82,36 @@ describe("buildIcon builds shapes", () => {
     expect((box.max.y - box.min.y) / (box.max.x - box.min.x)).toBeCloseTo(4 / 24, 2);
   });
 
+  const aspect = (shapes: Shape[]) => {
+    const box = bounds(shapes);
+    return (box.max.x - box.min.x) / (box.max.y - box.min.y);
+  };
+  const capped = (cap: string) =>
+    aspect(build(svg(`<line x1="2" y1="12" x2="22" y2="12" stroke="black" stroke-width="4" stroke-linecap="${cap}"/>`)));
+
+  it("extends square caps by half the stroke width at each end", () => {
+    expect(capped("butt")).toBeCloseTo(20 / 4, 3);
+    expect(capped("square")).toBeCloseTo(24 / 4, 3);
+    expect(capped("square") - capped("butt")).toBeCloseTo(1, 3);
+  });
+
+  it("extends round caps by half the stroke width at each end", () => {
+    expect(capped("round")).toBeCloseTo(24 / 4, 2);
+  });
+
+  it("keeps a square-capped closed stroke the same as butt", () => {
+    const ring = (cap: string) =>
+      aspect(build(svg(`<rect x="2" y="2" width="20" height="10" fill="none" stroke="black" stroke-width="2" stroke-linecap="${cap}"/>`)));
+    expect(ring("square")).toBeCloseTo(ring("butt"), 5);
+  });
+
+  it("reaches furthest at a sharp corner with miter, then round, then bevel", () => {
+    const tip = (join: string) =>
+      1 / aspect(build(svg(`<polyline points="2,20 12,4 22,20" fill="none" stroke="black" stroke-width="2" stroke-linejoin="${join}"/>`)));
+    expect(tip("miter")).toBeGreaterThan(tip("round"));
+    expect(tip("round")).toBeGreaterThan(tip("bevel"));
+  });
+
   it("drops text and external references with a warning and keeps the rest", () => {
     const result = buildIcon(svg('<rect width="10" height="10"/><text>Hi</text><use href="other.svg#a"/>'));
     expect(result).toMatchObject({ ok: true, warning: WARNING_SKIPPED });

@@ -16,7 +16,6 @@ type SvgStyle = { fill?: string; fillRule?: string; stroke?: string; strokeWidth
 
 const CURVE_DIVISIONS = 48;
 const SKIPPED_SELECTOR = "text, image, use";
-const CAPS = { round: "round", butt: "butt", square: "butt" } as const;
 const JOINS = { round: "round", bevel: "bevel", miter: "miter", "miter-clip": "miter", arcs: "miter" } as const;
 
 paper.setup(new paper.Size(1, 1));
@@ -24,6 +23,27 @@ paper.setup(new paper.Size(1, 1));
 function isExternalUse(element: Element): boolean {
   const href = element.getAttribute("href") ?? element.getAttribute("xlink:href") ?? "";
   return element.localName !== "use" || !href.startsWith("#");
+}
+
+function extendEnds(points: paper.Point[], distance: number): paper.Point[] {
+  const [first, second] = points;
+  const [last, beforeLast] = points.slice(-2).reverse();
+  if (!first || !second || !last || !beforeLast) return points;
+  return [
+    first.add(first.subtract(second).normalize(distance)),
+    ...points.slice(1, -1),
+    last.add(last.subtract(beforeLast).normalize(distance)),
+  ];
+}
+
+function outlineStroke(points: paper.Point[], closed: boolean, style: SvgStyle): paper.PathItem {
+  const half = style.strokeWidth / 2;
+  const square = !closed && style.strokeLineCap === "square";
+  const segments = square ? extendEnds(points, half) : points;
+  const cap = style.strokeLineCap === "round" ? "round" : "butt";
+  const join = JOINS[(style.strokeLineJoin ?? "miter") as keyof typeof JOINS] ?? "miter";
+  const path = new paper.Path({ segments, closed, insert: false });
+  return PaperOffset.offsetStroke(path, half, { cap, join, insert: false });
 }
 
 function toPaperPaths(svg: string): paper.PathItem[] {
@@ -39,13 +59,8 @@ function toPaperPaths(svg: string): paper.PathItem[] {
       const last = points[points.length - 1];
       if (!first || !last || points.length < 2) continue;
       const closed = subPath.autoClose || first.getDistance(last) < 1e-6;
-      const path = new paper.Path({ segments: points, closed, insert: false });
       if (filled) fill.addChild(new paper.Path({ segments: points, closed: true, insert: false }));
-      if (stroked) {
-        const cap = CAPS[(style.strokeLineCap ?? "butt") as keyof typeof CAPS] ?? "butt";
-        const join = JOINS[(style.strokeLineJoin ?? "miter") as keyof typeof JOINS] ?? "miter";
-        outlines.push(PaperOffset.offsetStroke(path, style.strokeWidth / 2, { cap, join, insert: false }));
-      }
+      if (stroked) outlines.push(outlineStroke(points, closed, style));
     }
     if (fill.children.length > 0) outlines.push(fill.unite(new paper.Path({ insert: false }), { insert: false }));
   }

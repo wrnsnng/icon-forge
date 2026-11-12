@@ -4,6 +4,8 @@ import { Suspense, useEffect, useMemo } from "react";
 import { ExtrudeGeometry, type Shape } from "three";
 import { getLook, useLook } from "./look";
 
+export type Toast = { id: number; message: string };
+
 const LOADING_LIGHTING = "Loading lighting…";
 const DROP_OVERLAY = "Drop SVG to load";
 const WEBGL_ERROR = "Icon Forge needs WebGL 2, which isn't available in this browser.";
@@ -68,7 +70,7 @@ function Scene({ shapes }: { shapes: Shape[] }) {
   );
 }
 
-export function Viewport({ shapes, dragging, toast }: { shapes: Shape[]; dragging: boolean; toast: string | null }) {
+export function Viewport({ shapes, dragging, toast }: { shapes: Shape[]; dragging: boolean; toast: Toast | null }) {
   const loading = useProgress((state) => state.active);
 
   if (!hasWebGL2) {
@@ -86,8 +88,8 @@ export function Viewport({ shapes, dragging, toast }: { shapes: Shape[]; draggin
       {loading && <div className="viewport-status">{LOADING_LIGHTING}</div>}
       {dragging && <div className="viewport-drop">{DROP_OVERLAY}</div>}
       {toast && (
-        <div className="toast" role="alert">
-          {toast}
+        <div key={toast.id} className="toast" role="alert">
+          {toast.message}
         </div>
       )}
     </div>

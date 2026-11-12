@@ -3,7 +3,7 @@ import type { Shape } from "three";
 import { getLook, setLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
 import { buildIcon } from "./svgIcon";
-import { Viewport } from "./Viewport";
+import { Viewport, type Toast } from "./Viewport";
 
 const SECTIONS_AFTER_ICON = ["Shape", "Material", "Lights", "Camera", "Export"];
 const CUSTOM_ID = "custom";
@@ -61,19 +61,24 @@ function WidthSlider({ slider }: { slider: (typeof WIDTH_SLIDERS)[number] }) {
 export function App() {
   const [icon, setIcon] = useState(() => presetIcon(DEFAULT_ICON_ID));
   const [customShapes, setCustomShapes] = useState<Shape[] | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastCount = useRef(0);
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const showToast = (message: string | undefined) => {
+    toastCount.current += 1;
+    setToast(message ? { id: toastCount.current, message } : null);
+  };
   const loadSvg = (text: string) => {
     const result = buildIcon(text);
     if (!result.ok) {
-      setToast(result.error);
+      showToast(result.error);
       return;
     }
     setCustomShapes(result.shapes);
     setIcon({ id: CUSTOM_ID, shapes: result.shapes });
-    setToast(result.warning ?? null);
+    showToast(result.warning);
   };
   const loadFile = (file: File | undefined) => {
     if (file) void file.text().then(loadSvg);
