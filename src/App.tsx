@@ -1,15 +1,14 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { Shape } from "three";
 import { getLook, setLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
-import { buildIcon } from "./svgIcon";
+import { buildIcon, type IconGeometry } from "./svgIcon";
 import { Viewport, type Toast } from "./Viewport";
 
 const SECTIONS_AFTER_ICON = ["Shape", "Material", "Lights", "Camera", "Export"];
 const CUSTOM_ID = "custom";
 const TOAST_MS = 6000;
 
-type Icon = { id: string; shapes: Shape[] };
+type Icon = { id: string; geometry: IconGeometry };
 type WidthKey = "scaleX" | "scaleY" | "depth";
 
 const WIDTH_SLIDERS: { key: WidthKey; label: string; min: number; max: number; helper?: string }[] = [
@@ -22,7 +21,7 @@ function presetIcon(id: string): Icon {
   const preset = PRESET_ICONS.find((icon) => icon.id === id);
   const result = buildIcon(preset?.svg ?? "");
   if (!result.ok) throw new Error(`Preset icon ${id} failed to build: ${result.error}`);
-  return { id, shapes: result.shapes };
+  return { id, geometry: result };
 }
 
 const isTextField = (target: EventTarget | null) =>
@@ -60,7 +59,7 @@ function WidthSlider({ slider }: { slider: (typeof WIDTH_SLIDERS)[number] }) {
 
 export function App() {
   const [icon, setIcon] = useState(() => presetIcon(DEFAULT_ICON_ID));
-  const [customShapes, setCustomShapes] = useState<Shape[] | null>(null);
+  const [customIcon, setCustomIcon] = useState<IconGeometry | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastCount = useRef(0);
   const [dragging, setDragging] = useState(false);
@@ -76,8 +75,8 @@ export function App() {
       showToast(result.error);
       return;
     }
-    setCustomShapes(result.shapes);
-    setIcon({ id: CUSTOM_ID, shapes: result.shapes });
+    setCustomIcon(result);
+    setIcon({ id: CUSTOM_ID, geometry: result });
     showToast(result.warning);
   };
   const loadFile = (file: File | undefined) => {
@@ -144,14 +143,14 @@ export function App() {
   }, [toast]);
 
   const selectIcon = (id: string) => {
-    if (id === CUSTOM_ID && customShapes) setIcon({ id, shapes: customShapes });
+    if (id === CUSTOM_ID && customIcon) setIcon({ id, geometry: customIcon });
     else if (id !== CUSTOM_ID) setIcon(presetIcon(id));
   };
 
   return (
     <main className="app">
       <h1 className="visually-hidden">Icon Forge</h1>
-      <Viewport shapes={icon.shapes} dragging={dragging} toast={toast} />
+      <Viewport icon={icon.geometry} dragging={dragging} toast={toast} />
       <aside className="panel">
         <section className="panel-section">
           <h2>Preset</h2>
@@ -170,7 +169,7 @@ export function App() {
                   ))}
                 </optgroup>
               ))}
-              {customShapes && (
+              {customIcon && (
                 <optgroup label="Your SVG">
                   <option value={CUSTOM_ID}>Your SVG</option>
                 </optgroup>

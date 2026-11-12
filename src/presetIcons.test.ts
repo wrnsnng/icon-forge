@@ -53,7 +53,7 @@ describe("preset icons", () => {
   });
 
   it.each(PRESET_ICONS.map((icon) => [icon.id, icon.svg]))("%s builds without a warning", (_, svg) => {
-    expect(buildIcon(svg)).toEqual({ ok: true, shapes: expect.any(Array) });
+    expect(buildIcon(svg)).toEqual({ ok: true, shapes: expect.any(Array), thinnest: expect.any(Number) });
   });
 
   it.each(PRESET_ICONS.map((icon) => [icon.id, icon.svg]))("%s covers every stroke of its source", (_, svg) => {

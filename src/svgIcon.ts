@@ -10,7 +10,8 @@ export const WARNING_SKIPPED = "Some elements were skipped (text, images or exte
 
 export const MAX_SVG_BYTES = 1024 * 1024;
 
-export type IconResult = { ok: true; shapes: Shape[]; warning?: string } | { ok: false; error: string };
+export type IconGeometry = { shapes: Shape[]; thinnest: number };
+export type IconResult = ({ ok: true; warning?: string } & IconGeometry) | { ok: false; error: string };
 
 type SvgStyle = { fill?: string; fillRule?: string; stroke?: string; strokeWidth: number; strokeLineCap?: string; strokeLineJoin?: string };
 
@@ -44,6 +45,12 @@ function outlineStroke(points: paper.Point[], closed: boolean, style: SvgStyle):
   const join = JOINS[(style.strokeLineJoin ?? "miter") as keyof typeof JOINS] ?? "miter";
   const path = new paper.Path({ segments, closed, insert: false });
   return PaperOffset.offsetStroke(path, half, { cap, join, insert: false });
+}
+
+function strokeWidthOf(outline: paper.PathItem): number {
+  const parts = outline instanceof paper.CompoundPath ? (outline.children as paper.Path[]) : [outline as paper.Path];
+  const perimeter = parts.reduce((sum, part) => sum + part.length, 0);
+  return perimeter > 0 ? (2 * Math.abs((outline as paper.Path).area)) / perimeter : Infinity;
 }
 
 function toPaperPaths(svg: string): paper.PathItem[] {
@@ -88,6 +95,7 @@ export function buildIcon(svgText: string): IconResult {
 
   const { center, width, height } = united.bounds;
   const scale = 1 / Math.max(width, height);
+  const thinnest = Math.min(...outlines.map(strokeWidthOf)) * scale;
   united.translate(center.multiply(-1));
   united.scale(scale, -scale, new paper.Point(0, 0));
 
@@ -97,5 +105,5 @@ export function buildIcon(svgText: string): IconResult {
     .paths.flatMap((shapePath) => SVGLoader.createShapes(shapePath));
   if (shapes.length === 0) return { ok: false, error: ERROR_NO_SHAPES };
 
-  return skipped.length > 0 ? { ok: true, shapes, warning: WARNING_SKIPPED } : { ok: true, shapes };
+  return skipped.length > 0 ? { ok: true, shapes, thinnest, warning: WARNING_SKIPPED } : { ok: true, shapes, thinnest };
 }
