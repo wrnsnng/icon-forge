@@ -291,6 +291,7 @@ fieldset.field legend {
 }
 
 .colour-trigger {
+  anchor-name: --colour-trigger;
   display: inline-flex;
   gap: 8px;
   align-items: center;
@@ -339,9 +340,21 @@ fieldset.field legend {
 }
 
 .colour-popover {
+  position-anchor: --colour-trigger;
+  inset: auto;
+  top: anchor(bottom);
+  left: anchor(left);
+  margin: 4px 0 0;
   padding: 12px;
   border: 1px solid var(--color-ink-200);
   border-radius: 8px;
+}
+
+@supports not (anchor-name: --colour-trigger) {
+  .colour-popover {
+    inset: 0;
+    margin: auto;
+  }
 }
 
 .colour-popover[open] {
@@ -359,4 +372,8 @@ fieldset.field legend {
 
 .colour-popover .swatch[aria-pressed="true"] {
   box-shadow: 0 0 0 2px var(--color-ink-0), 0 0 0 4px var(--color-ink-900);
+}
+
+.panel input[type="radio"] {
+  accent-color: var(--color-ink-900);
 }
