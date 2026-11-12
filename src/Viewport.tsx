@@ -1,9 +1,10 @@
-import { Environment, OrbitControls } from "@react-three/drei";
+import { Environment, OrbitControls, useProgress } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
 import { Suspense } from "react";
 import { ExtrudeGeometry, Shape } from "three";
 import { getLook, useLook } from "./look";
 
+const LOADING_LIGHTING = "Loading lighting…";
 const WEBGL_ERROR = "Icon Forge needs WebGL 2, which isn't available in this browser.";
 const CAMERA_DISTANCE = 3;
 
@@ -53,6 +54,8 @@ function Scene() {
 }
 
 export function Viewport() {
+  const loading = useProgress((state) => state.active);
+
   if (!hasWebGL2) {
     return (
       <div className="viewport viewport-error" role="alert">
@@ -65,6 +68,7 @@ export function Viewport() {
       <Canvas camera={{ fov: 30, position: initialCameraPosition() }}>
         <Scene />
       </Canvas>
+      {loading && <div className="viewport-status">{LOADING_LIGHTING}</div>}
     </div>
   );
 }

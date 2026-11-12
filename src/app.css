@@ -48,6 +48,15 @@ body {
   text-align: center;
 }
 
+.viewport-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-ink-600);
+  pointer-events: none;
+}
+
 .panel {
   overflow-y: auto;
   background: var(--surface-0);

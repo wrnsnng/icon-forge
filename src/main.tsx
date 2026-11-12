@@ -3,7 +3,10 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./app.css";
 
-createRoot(document.getElementById("root") as HTMLElement).render(
+const root = document.getElementById("root");
+if (!root) throw new Error("Icon Forge could not start: index.html has no #root element.");
+
+createRoot(root).render(
   <StrictMode>
     <App />
   </StrictMode>,
