@@ -194,7 +194,6 @@ body {
   height: 16px;
   margin: 0;
   background: transparent;
-  accent-color: var(--color-ink-900);
   appearance: none;
 }
 
@@ -236,4 +235,127 @@ body {
   margin: 4px 0 0;
   color: var(--color-ink-600);
   font-size: 12px;
+}
+
+.viewport-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.viewport-stage:focus-visible {
+  outline-offset: -2px;
+}
+
+.viewport-transparent {
+  background: repeating-conic-gradient(var(--color-ink-200) 0 25%, var(--color-ink-0) 0 50%) 0 0 / 16px 16px;
+}
+
+.field fieldset,
+fieldset.field {
+  margin: 12px 0 0;
+  padding: 0;
+  border: none;
+}
+
+fieldset.field legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.toggle {
+  display: flex;
+  gap: 16px;
+}
+
+.toggle label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.toggle legend {
+  float: left;
+  width: 100%;
+}
+
+.slider-ends {
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+}
+
+.field > span {
+  font-size: 13px;
+}
+
+.colour-trigger {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-self: start;
+}
+
+.panel-section .colour-trigger {
+  margin-top: 0;
+}
+
+.swatch-chip,
+.swatch {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--color-ink-600);
+  border-radius: 50%;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.swatches legend {
+  width: 100%;
+}
+
+.swatches .swatch {
+  position: relative;
+  cursor: pointer;
+}
+
+.swatches .swatch:has(:checked) {
+  box-shadow: 0 0 0 2px var(--color-ink-0), 0 0 0 4px var(--color-ink-900);
+}
+
+.swatches .swatch:has(:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+
+.swatch[data-color="transparent"] {
+  background: repeating-conic-gradient(var(--color-ink-200) 0 25%, var(--color-ink-0) 0 50%) 0 0 / 8px 8px;
+}
+
+.colour-popover {
+  padding: 12px;
+  border: 1px solid var(--color-ink-200);
+  border-radius: 8px;
+}
+
+.colour-popover[open] {
+  display: flex;
+  gap: 8px;
+}
+
+.panel-section .colour-popover .swatch {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+}
+
+.colour-popover .swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--color-ink-0), 0 0 0 4px var(--color-ink-900);
 }

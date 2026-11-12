@@ -1,21 +1,46 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { getLook, setLook, useLook, type Look } from "./look";
+import { BackgroundPicker, ColourPicker, Slider, Toggle, type SliderSpec, type Swatch } from "./Controls";
+import { updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
 import { buildIcon, type IconGeometry } from "./svgIcon";
 import { Viewport, type Toast } from "./Viewport";
 
-const SECTIONS_AFTER_ICON = ["Shape", "Material", "Lights", "Camera", "Export"];
 const CUSTOM_ID = "custom";
 const TOAST_MS = 6000;
+const ROUGHNESS: Record<Look["material"]["type"], number> = { glass: 0.05, clay: 0.7 };
 
 type Icon = { id: string; geometry: IconGeometry };
-type WidthKey = "scaleX" | "scaleY" | "depth";
 
-const WIDTH_SLIDERS: { key: WidthKey; label: string; min: number; max: number; helper?: string }[] = [
-  { key: "scaleX", label: "X width", min: 50, max: 150 },
-  { key: "scaleY", label: "Y width", min: 50, max: 150 },
-  { key: "depth", label: "Z width", min: 10, max: 300, helper: "Extrusion depth" },
+const WIDTH_SLIDERS: SliderSpec[] = [
+  { section: "shape", key: "scaleX", label: "X width", min: 50, max: 150, digits: 0, unit: "%" },
+  { section: "shape", key: "scaleY", label: "Y width", min: 50, max: 150, digits: 0, unit: "%" },
+  { section: "shape", key: "depth", label: "Z width", min: 10, max: 300, digits: 0, unit: "%", helper: "Extrusion depth" },
 ];
+const SHAPE_SLIDERS: SliderSpec[] = [
+  { section: "shape", key: "bevel", label: "Bevel", min: 0, max: 100, digits: 0 },
+  { section: "shape", key: "bulge", label: "Bulge", min: 0, max: 100, digits: 0 },
+];
+const ROUGHNESS_SLIDER: SliderSpec = { section: "material", key: "roughness", label: "Roughness", min: 0, max: 1, digits: 2 };
+const GLASS_SLIDERS: SliderSpec[] = [
+  { section: "material", key: "density", label: "Colour density", min: 0, max: 1, digits: 2 },
+  { section: "material", key: "ior", label: "Refraction", min: 1, max: 2.33, digits: 2 },
+  { section: "material", key: "dispersion", label: "Dispersion", min: 0, max: 1, digits: 2 },
+];
+const LIGHT_SLIDERS: SliderSpec[] = [
+  { section: "lights", key: "rotation", label: "Rotation", min: 0, max: 360, digits: 0, unit: "°" },
+  { section: "lights", key: "exposure", label: "Exposure", min: 0.2, max: 3, digits: 2 },
+];
+const CAMERA_SLIDERS: SliderSpec[] = [
+  { section: "camera", key: "zoom", label: "Zoom", min: 50, max: 200, digits: 0, unit: "%" },
+  { section: "camera", key: "glow", label: "Glow", min: 0, max: 1, digits: 2 },
+  { section: "camera", key: "dof", label: "Depth of field", min: 0, max: 1, digits: 2 },
+  { section: "camera", key: "focus", label: "Focus", min: 0, max: 1, digits: 2, ends: ["Near", "Far"] },
+];
+const COLOUR_SWATCHES: Swatch[] = [
+  { name: "Zest light colour", token: "--color-ink-900", hex: "#060605" },
+  { name: "Zest light accent", token: "--color-tangerine-500", hex: "#ff4c1f" },
+];
+const BACKGROUND_SWATCHES: Swatch[] = [{ name: "Zest light background", token: "--color-ink-0", hex: "#ffffff" }];
 
 function presetIcon(id: string): Icon {
   const preset = PRESET_ICONS.find((icon) => icon.id === id);
@@ -27,42 +52,14 @@ function presetIcon(id: string): Icon {
 const isTextField = (target: EventTarget | null) =>
   target instanceof HTMLElement && (target.isContentEditable || target.matches("input, textarea, select"));
 
-function WidthSlider({ slider }: { slider: (typeof WIDTH_SLIDERS)[number] }) {
-  const value = useLook((look) => look.shape[slider.key]);
-  const id = `slider-${slider.key}`;
-  const update = (next: number) => {
-    const look: Look = getLook();
-    setLook({ ...look, shape: { ...look.shape, [slider.key]: next } });
-  };
-  return (
-    <div className="field">
-      <label htmlFor={id}>
-        {slider.label} <output htmlFor={id}>{value}%</output>
-      </label>
-      <input
-        id={id}
-        type="range"
-        min={slider.min}
-        max={slider.max}
-        value={value}
-        aria-describedby={slider.helper ? `${id}-helper` : undefined}
-        onChange={(event) => update(Number(event.target.value))}
-      />
-      {slider.helper && (
-        <p id={`${id}-helper`} className="helper">
-          {slider.helper}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export function App() {
   const [icon, setIcon] = useState(() => presetIcon(DEFAULT_ICON_ID));
   const [customIcon, setCustomIcon] = useState<IconGeometry | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastCount = useRef(0);
   const [dragging, setDragging] = useState(false);
+  const [spin, setSpin] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const material = useLook((look) => look.material.type);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const showToast = (message: string | undefined) => {
@@ -150,7 +147,7 @@ export function App() {
   return (
     <main className="app">
       <h1 className="visually-hidden">Icon Forge</h1>
-      <Viewport icon={icon.geometry} dragging={dragging} toast={toast} />
+      <Viewport icon={icon.geometry} dragging={dragging} toast={toast} spin={spin} onSpinChange={setSpin} />
       <aside className="panel">
         <section className="panel-section">
           <h2>Preset</h2>
@@ -191,14 +188,57 @@ export function App() {
           />
           <p className="helper">Or drop an SVG anywhere, or paste one.</p>
           {WIDTH_SLIDERS.map((slider) => (
-            <WidthSlider key={slider.key} slider={slider} />
+            <Slider key={slider.key} spec={slider} />
           ))}
         </section>
-        {SECTIONS_AFTER_ICON.map((title) => (
-          <section key={title} className="panel-section">
-            <h2>{title}</h2>
-          </section>
-        ))}
+        <section className="panel-section">
+          <h2>Shape</h2>
+          {SHAPE_SLIDERS.map((slider) => (
+            <Slider key={slider.key} spec={slider} />
+          ))}
+        </section>
+        <section className="panel-section">
+          <h2>Material</h2>
+          <Toggle
+            label="Material"
+            name="material"
+            options={[
+              { value: "glass", label: "Glass" },
+              { value: "clay", label: "Clay" },
+            ]}
+            value={material}
+            onChange={(type) => updateLook("material", { type, roughness: ROUGHNESS[type] })}
+          />
+          <ColourPicker swatches={COLOUR_SWATCHES} />
+          <Slider spec={ROUGHNESS_SLIDER} />
+          {material === "glass" && GLASS_SLIDERS.map((slider) => <Slider key={slider.key} spec={slider} />)}
+        </section>
+        <section className="panel-section">
+          <h2>Lights</h2>
+          {LIGHT_SLIDERS.map((slider) => (
+            <Slider key={slider.key} spec={slider} />
+          ))}
+        </section>
+        <section className="panel-section">
+          <h2>Camera</h2>
+          <BackgroundPicker swatches={BACKGROUND_SWATCHES} />
+          {CAMERA_SLIDERS.map((slider) => (
+            <Slider key={slider.key} spec={slider} />
+          ))}
+          <Toggle
+            label="Spin"
+            name="spin"
+            options={[
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ]}
+            value={spin ? "on" : "off"}
+            onChange={(value) => setSpin(value === "on")}
+          />
+        </section>
+        <section className="panel-section">
+          <h2>Export</h2>
+        </section>
       </aside>
     </main>
   );

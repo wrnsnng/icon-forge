@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { DEFAULT_LOOK, setLook } from "./look";
 import { ERROR_NOT_SVG } from "./svgIcon";
 import type { Toast } from "./Viewport";
 
@@ -10,6 +11,8 @@ vi.mock("./Viewport", () => ({
   Viewport: ({ toast }: { toast: Toast | null }) =>
     toast ? createElement("div", { key: toast.id, role: "alert" }, toast.message) : null,
 }));
+
+let reducedMotion = false;
 
 const INVALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0'";
 const VALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10'/></svg>";
@@ -26,19 +29,29 @@ function paste(text: string) {
 const alertText = () => container.querySelector("[role=alert]")?.textContent ?? null;
 const iconSelect = () => container.querySelector<HTMLSelectElement>("#icon-select");
 
-beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  vi.useFakeTimers();
+function mount() {
   container = document.createElement("div");
   document.body.append(container);
+  // paper.js listens for keydown on document and throws in jsdom, where its view has no canvas.
+  container.addEventListener("keydown", (event) => event.stopPropagation());
   root = createRoot(container);
   act(() => root.render(createElement(App)));
+}
+
+beforeEach(() => {
+  reducedMotion = false;
+  setLook(DEFAULT_LOOK);
+  vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") && reducedMotion }));
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.useFakeTimers();
+  mount();
 });
 
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("App input errors", () => {
@@ -83,5 +96,86 @@ describe("App input errors", () => {
     paste(INVALID_SVG);
     act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(alertText()).toBeNull();
+  });
+});
+
+const sliderByLabel = (label: string) => {
+  const input = [...container.querySelectorAll<HTMLInputElement>("input[type=range]")].find(
+    (element) => element.labels?.[0]?.firstChild?.textContent?.trim() === label,
+  );
+  return input ?? null;
+};
+const valueText = (label: string) => sliderByLabel(label)?.getAttribute("aria-valuetext") ?? null;
+const radio = (name: string, label: string) =>
+  [...container.querySelectorAll<HTMLInputElement>(`input[name=${name}]`)].find((input) => input.parentElement?.textContent === label) ?? null;
+const press = (label: string, key: string, shiftKey = false) => {
+  const input = sliderByLabel(label);
+  if (!input) throw new Error(`No ${label} slider`);
+  act(() => input.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey, bubbles: true })));
+};
+
+describe("Look controls", () => {
+  it("shows every spec default on a fresh load", () => {
+    expect(
+      ["X width", "Y width", "Z width", "Bevel", "Bulge", "Roughness", "Colour density", "Refraction", "Dispersion", "Rotation", "Exposure", "Zoom", "Glow", "Depth of field", "Focus"].map(
+        (label) => [label, valueText(label)],
+      ),
+    ).toEqual([
+      ["X width", "100%"],
+      ["Y width", "100%"],
+      ["Z width", "100%"],
+      ["Bevel", "30"],
+      ["Bulge", "0"],
+      ["Roughness", "0.05"],
+      ["Colour density", "0.50"],
+      ["Refraction", "1.50"],
+      ["Dispersion", "0.20"],
+      ["Rotation", "0°"],
+      ["Exposure", "1.00"],
+      ["Zoom", "100%"],
+      ["Glow", "0.15"],
+      ["Depth of field", "0.00"],
+      ["Focus", "0.50"],
+    ]);
+    expect(radio("material", "Glass")?.checked).toBe(true);
+    expect(radio("spin", "On")?.checked).toBe(true);
+    expect(container.querySelector(".colour-trigger")?.getAttribute("aria-label")).toBe("Colour, --color-ink-900 #060605");
+  });
+
+  it("starts with Spin off under reduced motion", () => {
+    act(() => root.unmount());
+    container.remove();
+    reducedMotion = true;
+    mount();
+    expect(radio("spin", "Off")?.checked).toBe(true);
+  });
+
+  it("hides the glass-only controls for Clay and brings them back for Glass", () => {
+    const glassOnly = ["Colour density", "Refraction", "Dispersion"];
+    act(() => radio("material", "Clay")?.click());
+    expect(glassOnly.map(sliderByLabel)).toEqual([null, null, null]);
+    expect(valueText("Roughness")).toBe("0.70");
+    act(() => radio("material", "Glass")?.click());
+    expect(glassOnly.map((label) => sliderByLabel(label) !== null)).toEqual([true, true, true]);
+    expect(valueText("Roughness")).toBe("0.05");
+  });
+
+  it("steps a slider by 1% of its range, and 10% with Shift", () => {
+    press("X width", "ArrowRight");
+    expect(valueText("X width")).toBe("101%");
+    press("Z width", "ArrowRight");
+    expect(valueText("Z width")).toBe("103%");
+    press("Z width", "ArrowLeft", true);
+    expect(valueText("Z width")).toBe("74%");
+    press("Refraction", "ArrowUp", true);
+    expect(valueText("Refraction")).toBe("1.63");
+  });
+
+  it("stops stepping at the ends of the range", () => {
+    press("Exposure", "ArrowLeft", true);
+    press("Exposure", "ArrowLeft", true);
+    expect(valueText("Exposure")).toBe("0.44");
+    for (let i = 0; i < 10; i += 1) press("Exposure", "ArrowLeft");
+    expect(valueText("Exposure")).toBe("0.20");
   });
 });

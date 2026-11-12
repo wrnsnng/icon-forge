@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_LOOK } from "./look";
 import { buildIcon } from "./svgIcon";
-import { extrusionOptions } from "./Viewport";
+import { extrusionOptions, iconGeometry } from "./Viewport";
 
 const svg = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${body}</svg>`;
 
@@ -42,5 +42,40 @@ describe("extrusionOptions", () => {
   it("maps Z width to depth with 100% at 0.2 units", () => {
     const options = optionsFor(svg('<rect x="0" y="0" width="24" height="24"/>'));
     expect(options.depth).toBeCloseTo(0.2, 6);
+  });
+});
+
+describe("iconGeometry bulge", () => {
+  const square = () => {
+    const result = buildIcon(svg('<rect x="0" y="0" width="24" height="24"/>'));
+    if (!result.ok) throw new Error(result.error);
+    return result;
+  };
+  const shape = (bulge: number) => ({ depth: 100, bevel: 0, bulge });
+  const thickness = (bulge: number) => {
+    const geometry = iconGeometry(square(), shape(bulge));
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    if (!box) throw new Error("No bounding box");
+    const position = geometry.getAttribute("position");
+    let edge = 0;
+    for (let i = 0; i < position.count; i += 1) {
+      if (Math.abs(Math.abs(position.getX(i)) - 0.5) < 1e-6) edge = Math.max(edge, Math.abs(position.getZ(i)));
+    }
+    return { total: box.max.z - box.min.z, edge: 2 * edge };
+  };
+
+  it("leaves a flat solid at bulge 0", () => {
+    expect(thickness(0).total).toBeCloseTo(0.2, 6);
+  });
+
+  it("swells each cap by 0.1 units at bulge 100 and keeps the outline in place", () => {
+    const { total, edge } = thickness(100);
+    expect(total).toBeCloseTo(0.2 + 2 * 0.1, 2);
+    expect(edge).toBeCloseTo(0.2, 6);
+  });
+
+  it("scales the swell with the slider", () => {
+    expect(thickness(50).total).toBeCloseTo(0.2 + 2 * 0.05, 2);
   });
 });
