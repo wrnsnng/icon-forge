@@ -1,0 +1,105 @@
+:root {
+  --color-ink-0: #ffffff;
+  --color-ink-200: #eeecea;
+  --color-ink-600: #4c4a47;
+  --color-ink-900: #060605;
+  --color-tangerine-500: #ff4c1f;
+  --surface-0: var(--color-ink-0);
+  --ring: var(--color-tangerine-500);
+
+  color: var(--color-ink-900);
+  background: var(--surface-0);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  height: 100dvh;
+}
+
+.viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewport-error {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--color-ink-600);
+  text-align: center;
+}
+
+.viewport-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--color-ink-600);
+  pointer-events: none;
+}
+
+.panel {
+  overflow-y: auto;
+  background: var(--surface-0);
+  border-left: 1px solid var(--color-ink-200);
+}
+
+.panel-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-ink-200);
+}
+
+.panel-section h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (width < 720px) {
+  body {
+    overflow: auto;
+  }
+
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 60vh auto;
+    height: auto;
+  }
+
+  .panel {
+    overflow-y: visible;
+    border-left: none;
+    border-top: 1px solid var(--color-ink-200);
+  }
+}
