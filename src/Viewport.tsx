@@ -44,10 +44,10 @@ function Scene() {
       {background !== "transparent" && <color attach="background" args={[background]} />}
       <Suspense fallback={null}>
         <Environment files="/hdri/studio_small_09_1k.hdr" />
+        <mesh geometry={placeholder}>
+          <meshPhysicalMaterial color={color} roughness={roughness} metalness={0} />
+        </mesh>
       </Suspense>
-      <mesh geometry={placeholder}>
-        <meshPhysicalMaterial color={color} roughness={roughness} metalness={0} />
-      </mesh>
       <OrbitControls makeDefault enablePan={false} />
     </>
   );

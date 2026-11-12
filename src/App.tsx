@@ -5,6 +5,7 @@ const SECTIONS = ["Preset", "Icon", "Shape", "Material", "Lights", "Camera", "Ex
 export function App() {
   return (
     <main className="app">
+      <h1 className="visually-hidden">Icon Forge</h1>
       <Viewport />
       <aside className="panel">
         {SECTIONS.map((title) => (
