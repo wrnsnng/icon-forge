@@ -128,7 +128,13 @@ export function ColourPicker({ swatches }: { swatches: ColourSwatch[] }) {
         <span className="swatch-chip" style={{ background: color }} />
         {current?.token ?? color}
       </button>
-      <dialog ref={dialog} className="colour-popover" aria-labelledby="colour-label" onClick={(event) => event.target === dialog.current && dialog.current?.close()}>
+      <dialog ref={dialog} className="colour-popover" aria-labelledby="colour-label" onClick={(event) => {
+          const element = dialog.current;
+          if (!element || event.target !== element) return;
+          const rect = element.getBoundingClientRect();
+          const inside = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+          if (!inside) element.close();
+        }}>
         {swatches.map((swatch) => (
           <button
             key={swatch.hex}

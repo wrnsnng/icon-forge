@@ -177,6 +177,19 @@ describe("Look controls", () => {
     expect(container.querySelector(".colour-trigger")?.getAttribute("aria-label")).toBe("Colour, --color-ink-100 #f8f6f4");
   });
 
+  it("closes the colour popover on a backdrop click but not on a click inside it", () => {
+    const dialog = container.querySelector<HTMLDialogElement>(".colour-popover");
+    if (!dialog) throw new Error("No colour popover");
+    dialog.getBoundingClientRect = () => DOMRect.fromRect({ x: 100, y: 100, width: 200, height: 60 });
+    const clickDialogAt = (clientX: number, clientY: number) =>
+      act(() => dialog.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX, clientY })));
+    act(() => container.querySelector<HTMLButtonElement>(".colour-trigger")?.click());
+    clickDialogAt(150, 110);
+    expect(dialog.open).toBe(true);
+    clickDialogAt(20, 20);
+    expect(dialog.open).toBe(false);
+  });
+
   it("starts with Spin off under reduced motion", () => {
     act(() => root.unmount());
     container.remove();
