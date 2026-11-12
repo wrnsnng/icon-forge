@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent } from "react";
 import { updateLook, useLook, type Look } from "./look";
+import type { Swatch } from "./presets";
 
 type Section = "shape" | "material" | "lights" | "camera";
 type NumberKey<S extends Section> = { [K in keyof Look[S]]: Look[S][K] extends number ? K : never }[keyof Look[S]];
@@ -101,8 +102,6 @@ export function Toggle<T extends string>({
     </fieldset>
   );
 }
-
-export type Swatch = { name: string; token: string; hex: string };
 
 const swatchName = (swatch: Swatch) => `${swatch.name} — ${swatch.token} ${swatch.hex}`;
 

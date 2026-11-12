@@ -142,6 +142,19 @@ describe("Look controls", () => {
     expect(container.querySelector(".colour-trigger")?.getAttribute("aria-label")).toBe("Colour, --color-ink-900 #060605");
   });
 
+  it("offers the six preset colours and four preset backgrounds plus Transparent", () => {
+    const named = /^.+ — --[a-z0-9-]+ #[0-9a-f]{6}$/;
+    const colours = [...container.querySelectorAll(".colour-popover .swatch")].map((swatch) => swatch.getAttribute("aria-label"));
+    expect(colours).toHaveLength(6);
+    expect(colours.every((name) => named.test(name ?? ""))).toBe(true);
+    expect(colours).toContain("Zest light colour — --color-ink-900 #060605");
+    expect(new Set(colours.map((name) => name?.slice(-7)))).toEqual(new Set(["#060605", "#ff4c1f", "#f8f6f4", "#ff815f", "#f0eee7", "#181818"]));
+    const backgrounds = [...container.querySelectorAll<HTMLInputElement>("input[name=background]")].map((input) => input.getAttribute("aria-label"));
+    expect(backgrounds.slice(0, 4).every((name) => named.test(name ?? ""))).toBe(true);
+    expect(backgrounds.slice(0, 4).map((name) => name?.slice(-7))).toEqual(["#ffffff", "#151311", "#0d0b07", "#e7e7e7"]);
+    expect(backgrounds.slice(4)).toEqual(["Transparent"]);
+  });
+
   it("starts with Spin off under reduced motion", () => {
     act(() => root.unmount());
     container.remove();

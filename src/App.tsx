@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { BackgroundPicker, ColourPicker, Slider, Toggle, type SliderSpec, type Swatch } from "./Controls";
+import { BackgroundPicker, ColourPicker, Slider, Toggle, type SliderSpec } from "./Controls";
+import { BACKGROUND_SWATCHES, COLOUR_SWATCHES } from "./presets";
 import { updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
 import { buildIcon, type IconGeometry } from "./svgIcon";
@@ -36,11 +37,6 @@ const CAMERA_SLIDERS: SliderSpec[] = [
   { section: "camera", key: "dof", label: "Depth of field", min: 0, max: 1, digits: 2 },
   { section: "camera", key: "focus", label: "Focus", min: 0, max: 1, digits: 2, ends: ["Near", "Far"] },
 ];
-const COLOUR_SWATCHES: Swatch[] = [
-  { name: "Zest light colour", token: "--color-ink-900", hex: "#060605" },
-  { name: "Zest light accent", token: "--color-tangerine-500", hex: "#ff4c1f" },
-];
-const BACKGROUND_SWATCHES: Swatch[] = [{ name: "Zest light background", token: "--color-ink-0", hex: "#ffffff" }];
 
 function presetIcon(id: string): Icon {
   const preset = PRESET_ICONS.find((icon) => icon.id === id);
