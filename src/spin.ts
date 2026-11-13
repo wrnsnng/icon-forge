@@ -36,24 +36,27 @@ export type SpinStage = {
   renderFrame: (turn: number) => void;
 };
 
-function dequeuedOrAborted(encoder: VideoEncoder, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const done = () => {
-      encoder.removeEventListener("dequeue", done);
-      signal.removeEventListener("abort", done);
-      resolve();
-    };
-    encoder.addEventListener("dequeue", done);
-    signal.addEventListener("abort", done);
+export function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) {
+      work.catch(() => undefined);
+      abort();
+      return;
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
+
+const dequeued = (encoder: VideoEncoder) => new Promise((resolve) => encoder.addEventListener("dequeue", resolve, { once: true }));
 
 export async function encodeSpin(
   { canvas, renderFrame }: SpinStage,
   { codec, config }: SpinCodec,
   onSecond: (seconds: number) => void,
   signal: AbortSignal,
-): Promise<Blob | null> {
+): Promise<Blob> {
   const target = new BufferTarget();
   const output = new Output({ format: new WebMOutputFormat(), target });
   const source = new EncodedVideoPacketSource(codec);
@@ -76,11 +79,11 @@ export async function encodeSpin(
     if (failure) throw failure;
   };
   try {
-    await output.start();
+    await abortable(output.start(), signal);
     encoder.configure(config);
     for (let frame = 0; frame < SPIN_FRAMES; frame += 1) {
-      while (encoder.encodeQueueSize >= MAX_QUEUED_FRAMES && !signal.aborted) await dequeuedOrAborted(encoder, signal);
-      if (signal.aborted) return null;
+      signal.throwIfAborted();
+      while (encoder.encodeQueueSize >= MAX_QUEUED_FRAMES) await abortable(dequeued(encoder), signal);
       check();
       renderFrame(frame / SPIN_FRAMES);
       const videoFrame = new VideoFrame(canvas, { timestamp: (frame * 1e6) / SPIN_FPS, duration: 1e6 / SPIN_FPS });
@@ -91,15 +94,15 @@ export async function encodeSpin(
       }
     }
     check();
-    await encoder.flush();
-    await written;
-    if (signal.aborted) return null;
+    await abortable(encoder.flush(), signal);
+    await abortable(written, signal);
     check();
-    await output.finalize();
+    await abortable(output.finalize(), signal);
+    signal.throwIfAborted();
     if (!target.buffer) throw new Error("The WebM muxer produced no data");
     return new Blob([target.buffer], { type: "video/webm" });
   } finally {
     if (encoder.state !== "closed") encoder.close();
-    if (output.state !== "finalized" && output.state !== "canceled") await output.cancel();
+    if (output.state !== "finalized" && output.state !== "canceled") void output.cancel().catch(() => undefined);
   }
 }

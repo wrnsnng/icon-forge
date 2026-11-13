@@ -7,6 +7,27 @@ import { DEFAULT_LOOK, getLook, setLook, type Look } from "./look";
 import { ERROR_NOT_SVG } from "./svgIcon";
 import type { Toast } from "./Viewport";
 
+let dispatchesAfterUnmount: number | null = null;
+vi.mock("react", async (original) => {
+  const react = await original<typeof import("react")>();
+  const wrapped = new WeakMap<object, unknown>();
+  const watch = <S>(set: (value: S) => void) => {
+    if (!wrapped.has(set))
+      wrapped.set(set, (value: S) => {
+        if (dispatchesAfterUnmount !== null) dispatchesAfterUnmount += 1;
+        set(value);
+      });
+    return wrapped.get(set) as (value: S) => void;
+  };
+  return {
+    ...react,
+    useState: <S>(initial: S | (() => S)) => {
+      const [state, set] = react.useState(initial);
+      return [state, watch(set)] as const;
+    },
+  };
+});
+
 vi.mock("./Viewport", () => ({
   hasWebGL2: true,
   Viewport: ({ toast }: { toast: Toast | null }) =>
@@ -24,11 +45,11 @@ vi.mock("./renderPng", () => ({
   }),
 }));
 
-let spinResult: { resolve: (video: Blob | null) => void; reject: (error: Error) => void; signal: AbortSignal } | null = null;
+let spinResult: { resolve: (video: Blob) => void; reject: (error: Error) => void; signal: AbortSignal; onSecond: (seconds: number) => void } | null = null;
 vi.mock("./renderSpin", () => ({
   renderSpin: (...args: unknown[]) =>
-    new Promise<Blob | null>((resolve, reject) => {
-      spinResult = { resolve, reject, signal: args[5] as AbortSignal };
+    new Promise<Blob>((resolve, reject) => {
+      spinResult = { resolve, reject, signal: args[5] as AbortSignal, onSecond: args[4] as (seconds: number) => void };
     }),
 }));
 
@@ -632,21 +653,39 @@ describe("Export lock", () => {
     expect(disabledControls()).toEqual([false, false, false, false, false, false]);
   });
 
-  it("aborts a running spin export when the app unmounts", () => {
+  it("aborts a running spin on unmount and settles it with no state update, download or error", async () => {
+    const errors = vi.spyOn(console, "error");
     act(() => control("Export spin")?.click());
-    const signal = spinResult?.signal;
-    expect(signal?.aborted).toBe(false);
+    const spin = spinResult;
+    expect(spin?.signal.aborted).toBe(false);
     act(() => root.unmount());
-    expect(signal?.aborted).toBe(true);
+    dispatchesAfterUnmount = 0;
+    expect(spin?.signal.aborted).toBe(true);
+    await act(async () => {
+      spin?.onSecond(3);
+      spin?.reject(new DOMException("The operation was aborted.", "AbortError"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(dispatchesAfterUnmount).toBe(0);
+    expect(downloads).toEqual([]);
+    expect(errors).not.toHaveBeenCalled();
+    dispatchesAfterUnmount = null;
     mount();
   });
 
-  it("downloads nothing, shows no error and releases every export when a spin ends aborted", async () => {
+  it("downloads nothing when a spin finishes encoding after the app unmounts", async () => {
     act(() => control("Export spin")?.click());
-    await act(async () => spinResult?.resolve(null));
+    const spin = spinResult;
+    act(() => root.unmount());
+    dispatchesAfterUnmount = 0;
+    await act(async () => {
+      spin?.resolve(new Blob(["webm"]));
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(downloads).toEqual([]);
-    expect(alertText()).toBeNull();
-    expect(disabledControls()).toEqual([false, false, false, false, false, false]);
+    expect(dispatchesAfterUnmount).toBe(0);
+    dispatchesAfterUnmount = null;
+    mount();
   });
 
   it("disables the spin, GLB and look controls while a PNG set renders, and releases them on cancel", async () => {

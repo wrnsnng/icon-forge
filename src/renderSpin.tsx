@@ -2,7 +2,7 @@ import { createRoot, type RootState } from "@react-three/fiber";
 import { Color } from "three";
 import type { Look } from "./look";
 import { FailOnError, Ready } from "./renderPng";
-import { encodeSpin, SPIN_SECONDS, SPIN_SIZE, type SpinCodec } from "./spin";
+import { abortable, encodeSpin, SPIN_SECONDS, SPIN_SIZE, type SpinCodec } from "./spin";
 import type { IconGeometry } from "./svgIcon";
 import { CAMERA_FOV, cameraPosition, loadStudioEnvironment, LookScene, TURNTABLE } from "./Viewport";
 
@@ -13,20 +13,20 @@ export async function renderSpin(
   codec: SpinCodec,
   onSecond: (seconds: number) => void,
   signal: AbortSignal,
-): Promise<Blob | null> {
+): Promise<Blob> {
   const canvas = document.createElement("canvas");
   const root = createRoot(canvas);
   const environment = loadStudioEnvironment();
   try {
-    await root.configure({
+    await abortable(root.configure({
       gl: { antialias: true, preserveDrawingBuffer: true },
       camera: { fov: CAMERA_FOV, position: cameraPosition(look.camera) },
       size: { width: SPIN_SIZE, height: SPIN_SIZE, top: 0, left: 0 },
       dpr: 1,
       frameloop: "never",
-    });
-    const texture = await environment;
-    const state = await new Promise<RootState>((resolve, reject) =>
+    }), signal);
+    const texture = await abortable(environment, signal);
+    const state = await abortable(new Promise<RootState>((resolve, reject) =>
       root.render(
         <FailOnError onError={reject}>
           <LookScene icon={icon} look={look} spin={false} environment={texture}>
@@ -34,8 +34,7 @@ export async function renderSpin(
           </LookScene>
         </FailOnError>,
       ),
-    );
-    if (signal.aborted) return null;
+    ), signal);
     const turntable = state.scene.getObjectByName(TURNTABLE);
     if (!turntable) throw new Error("The offscreen icon didn't mount");
     state.scene.background = new Color(background);

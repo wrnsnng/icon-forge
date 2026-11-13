@@ -8,7 +8,7 @@ import { buildIcon, ERROR_NOT_SVG, type IconGeometry } from "./svgIcon";
 import { exportGlb } from "./glb";
 import { createPngRenderer } from "./renderPng";
 import { renderSpin } from "./renderSpin";
-import { findSpinCodec, spinBackground, type SpinCodec } from "./spin";
+import { abortable, findSpinCodec, spinBackground, type SpinCodec } from "./spin";
 import { hasWebGL2, iconGeometry, Viewport, type Toast } from "./Viewport";
 
 const CUSTOM_ID = "custom";
@@ -120,7 +120,14 @@ export function App() {
   const [spinCodec, setSpinCodec] = useState<SpinCodec | null | undefined>(undefined);
   const runningJob = useRef<AbortController | null>(null);
 
-  useEffect(() => () => runningJob.current?.abort(), []);
+  useEffect(
+    () => () => {
+      const job = runningJob.current;
+      runningJob.current = null;
+      job?.abort();
+    },
+    [],
+  );
   const spinText = useLook((look) => spinHelper(look, exporting?.seconds, spinCodec));
 
   useEffect(() => {
@@ -236,13 +243,16 @@ export function App() {
     runningJob.current = controller;
     setExporting({ kind, controller });
     setStatus(null);
+    const live = () => runningJob.current === controller;
     try {
-      await work({ signal: controller.signal, update: (patch) => setExporting({ kind, controller, ...patch }) });
+      await work({ signal: controller.signal, update: (patch) => live() && setExporting({ kind, controller, ...patch }) });
     } catch {
       if (!controller.signal.aborted) showToast(EXPORT_FAILED);
     } finally {
-      if (runningJob.current === controller) runningJob.current = null;
-      setExporting(null);
+      if (live()) {
+        runningJob.current = null;
+        setExporting(null);
+      }
     }
   };
 
@@ -282,8 +292,8 @@ export function App() {
       if (!spinCodec) return;
       update({ seconds: 0 });
       const look = getLook();
-      const video = await renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }), signal);
-      if (video) download(video, "icon-spin.webm");
+      const video = await abortable(renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }), signal), signal);
+      download(video, "icon-spin.webm");
     });
 
   const exportGlbFile = () =>

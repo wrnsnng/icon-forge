@@ -33,6 +33,7 @@ class FakeFrame {
 let supported: string[];
 let encoders: FakeEncoder[];
 let failOnFrame: number | null;
+let stallFlush: boolean;
 
 class FakeEncoder extends EventTarget {
   static isConfigSupported = async (config: VideoEncoderConfig) => ({ supported: supported.includes(config.codec), config });
@@ -74,6 +75,7 @@ class FakeEncoder extends EventTarget {
   }
   async flush() {
     if (this.state !== "configured") throw new DOMException("not configured", "InvalidStateError");
+    if (stallFlush) return new Promise<void>(() => {});
     while (this.queued.length > 0) this.encodeNext();
     this.held.forEach((chunk, i) =>
       this.init.output(chunk as unknown as EncodedVideoChunk, i === 0 ? { decoderConfig: { codec: this.config?.codec ?? "", codedWidth: 1080, codedHeight: 1080 } } : undefined),
@@ -117,6 +119,7 @@ beforeEach(() => {
   supported = ["vp09.00.10.08", "vp8"];
   encoders = [];
   failOnFrame = null;
+  stallFlush = false;
   vi.stubGlobal("VideoEncoder", FakeEncoder);
   vi.stubGlobal("VideoFrame", FakeFrame);
   vi.stubGlobal("EncodedVideoChunk", FakeChunk);
@@ -223,8 +226,7 @@ describe("encodeSpin", () => {
         if (turns.length === 100) controller.abort();
       },
     };
-    const video = await encodeSpin(aborting, VP9, () => {}, controller.signal);
-    expect(video).toBeNull();
+    await expect(encodeSpin(aborting, VP9, () => {}, controller.signal)).rejects.toThrow(/abort/i);
     expect(turns).toHaveLength(100);
     expect(encoders[0]?.encoded.length).toBeLessThanOrEqual(100);
     expect(encoders[0]?.state).toBe("closed");
@@ -237,7 +239,7 @@ describe("encodeSpin", () => {
     const video = encodeSpin(s, VP9, () => {}, controller.signal);
     await vi.waitFor(() => expect(encoders[0]?.encodeQueueSize).toBe(4));
     controller.abort();
-    expect(await video).toBeNull();
+    await expect(video).rejects.toThrow(/abort/i);
     const rendered = turns.length;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(turns).toHaveLength(rendered);
@@ -249,7 +251,46 @@ describe("encodeSpin", () => {
     const controller = new AbortController();
     controller.abort();
     const { turns, stage: s } = stage();
-    expect(await encodeSpin(s, VP9, () => {}, controller.signal)).toBeNull();
+    await expect(encodeSpin(s, VP9, () => {}, controller.signal)).rejects.toThrow(/abort/i);
     expect(turns).toEqual([]);
+  });
+
+  it("settles promptly when aborted while the encoder is flushing", async () => {
+    stallFlush = true;
+    const controller = new AbortController();
+    const cancel = vi.spyOn(Output.prototype, "cancel");
+    const { turns, stage: s } = stage();
+    const video = encodeSpin(s, VP9, () => {}, controller.signal);
+    await vi.waitFor(() => expect(turns).toHaveLength(240));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await expect(video).rejects.toThrow(/abort/i);
+    expect(encoders[0]?.state).toBe("closed");
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("produces no video when aborted while the output is finalizing", async () => {
+    const controller = new AbortController();
+    let finalizing = () => {};
+    const started = new Promise<void>((resolve) => (finalizing = resolve));
+    vi.spyOn(Output.prototype, "finalize").mockImplementation(() => {
+      finalizing();
+      return new Promise<void>(() => {});
+    });
+    const video = encodeSpin(stage().stage, VP9, () => {}, controller.signal);
+    await started;
+    controller.abort();
+    await expect(video).rejects.toThrow(/abort/i);
+    expect(encoders[0]?.state).toBe("closed");
+  });
+
+  it("produces no video when aborted just as finalizing completes", async () => {
+    const controller = new AbortController();
+    const finalize = Output.prototype.finalize;
+    vi.spyOn(Output.prototype, "finalize").mockImplementation(async function (this: Output) {
+      await finalize.call(this);
+      controller.abort();
+    });
+    await expect(encodeSpin(stage().stage, VP9, () => {}, controller.signal)).rejects.toThrow(/abort/i);
   });
 });
