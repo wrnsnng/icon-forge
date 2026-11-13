@@ -1,16 +1,36 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { BackgroundPicker, ColourPicker, PresetPicker, Slider, Toggle, type SliderSpec } from "./Controls";
+import { BackgroundPicker, CheckboxGroup, ColourPicker, PresetPicker, Slider, Toggle, type SliderSpec } from "./Controls";
+import { exportIcon, exportSet, iconSlug, type RenderPng, type SetItem } from "./exportPng";
 import { BACKGROUND_SWATCHES, COLOUR_SWATCHES } from "./presets";
-import { updateLook, useLook, type Look } from "./look";
+import { getLook, updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
 import { buildIcon, type IconGeometry } from "./svgIcon";
+import { createPngRenderer } from "./renderPng";
 import { Viewport, type Toast } from "./Viewport";
 
 const CUSTOM_ID = "custom";
 const TOAST_MS = 6000;
 const ROUGHNESS: Record<Look["material"]["type"], number> = { glass: 0.05, clay: 0.7 };
 
-type Icon = { id: string; geometry: IconGeometry };
+type Icon = { id: string; name: string; geometry: IconGeometry };
+type Exporting = { kind: "png" | "set"; controller: AbortController; progress?: { n: number; total: number } };
+type Job = { signal: AbortSignal; look: Look; render: RenderPng; progress: (n: number, total: number) => void };
+
+const EXPORT_FAILED = "Export failed. Try again.";
+const SET_LABELS: Record<string, string> = { [ZEST_GROUP]: "Export Zest set", [SELEKT_GROUP]: "Export Selekt-2 set" };
+const SIZES = [16, 20, 24] as const;
+const SCALES = [1, 2, 4] as const;
+
+function download(data: Uint8Array, filename: string) {
+  const url = URL.createObjectURL(new Blob([data as BlobPart], { type: "application/zip" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url));
+}
+
+const doneMessage = (ok: number, failed: number) => (failed > 0 ? `Exported ${ok} icons. ${failed} skipped.` : `Exported ${ok} icons.`);
 
 const WIDTH_SLIDERS: SliderSpec[] = [
   { section: "shape", key: "scaleX", label: "X width", min: 50, max: 150, digits: 0, unit: "%" },
@@ -42,7 +62,7 @@ function presetIcon(id: string): Icon {
   const preset = PRESET_ICONS.find((icon) => icon.id === id);
   const result = buildIcon(preset?.svg ?? "");
   if (!result.ok) throw new Error(`Preset icon ${id} failed to build: ${result.error}`);
-  return { id, geometry: result };
+  return { id, name: preset?.name ?? id, geometry: result };
 }
 
 const isTextField = (target: EventTarget | null) =>
@@ -50,33 +70,37 @@ const isTextField = (target: EventTarget | null) =>
 
 export function App() {
   const [icon, setIcon] = useState(() => presetIcon(DEFAULT_ICON_ID));
-  const [customIcon, setCustomIcon] = useState<IconGeometry | null>(null);
+  const [customIcon, setCustomIcon] = useState<Omit<Icon, "id"> | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastCount = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [spin, setSpin] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const material = useLook((look) => look.material.type);
   const fileInput = useRef<HTMLInputElement>(null);
+  const setInput = useRef<HTMLInputElement>(null);
+  const [setFiles, setSetFiles] = useState<SetItem[]>([]);
+  const [exporting, setExporting] = useState<Exporting | null>(null);
+  const [status, setStatus] = useState("");
 
   const showToast = (message: string | undefined) => {
     toastCount.current += 1;
     setToast(message ? { id: toastCount.current, message } : null);
   };
-  const loadSvg = (text: string) => {
+  const loadSvg = (text: string, name = "icon") => {
     const result = buildIcon(text);
     if (!result.ok) {
       showToast(result.error);
       return;
     }
-    setCustomIcon(result);
-    setIcon({ id: CUSTOM_ID, geometry: result });
+    setCustomIcon({ name, geometry: result });
+    setIcon({ id: CUSTOM_ID, name, geometry: result });
     showToast(result.warning);
   };
   const loadFile = (file: File | undefined) => {
-    if (file) void file.text().then(loadSvg);
+    if (file) void file.text().then((text) => loadSvg(text, file.name));
   };
   const onFileDropped = useEffectEvent(loadFile);
-  const onSvgPasted = useEffectEvent(loadSvg);
+  const onSvgPasted = useEffectEvent((text: string) => loadSvg(text));
 
   useEffect(() => {
     let depth = 0;
@@ -136,8 +160,53 @@ export function App() {
   }, [toast]);
 
   const selectIcon = (id: string) => {
-    if (id === CUSTOM_ID && customIcon) setIcon({ id, geometry: customIcon });
+    if (id === CUSTOM_ID && customIcon) setIcon({ id, ...customIcon });
     else if (id !== CUSTOM_ID) setIcon(presetIcon(id));
+  };
+
+  const group = PRESET_ICONS.find((preset) => preset.id === icon.id)?.group;
+  const setItems: SetItem[] =
+    setFiles.length > 0 ? setFiles : PRESET_ICONS.filter((preset) => preset.group === group).map(({ name, svg }) => ({ name, svg }));
+  const setLabel = setFiles.length > 0 ? `Export set (${setFiles.length} SVGs)` : (group && SET_LABELS[group]) ?? "Export set";
+
+  const runExport = async (kind: Exporting["kind"], work: (job: Job) => Promise<void>) => {
+    const controller = new AbortController();
+    setExporting({ kind, controller });
+    setStatus("");
+    const look = getLook();
+    let renderer: Awaited<ReturnType<typeof createPngRenderer>> | null = null;
+    try {
+      renderer = await createPngRenderer(look);
+      const progress = (n: number, total: number) => setExporting({ kind, controller, progress: { n, total } });
+      await work({ signal: controller.signal, look, render: renderer.render, progress });
+    } catch {
+      showToast(EXPORT_FAILED);
+    } finally {
+      renderer?.dispose();
+      setExporting(null);
+    }
+  };
+
+  const exportPng = () =>
+    runExport("png", async ({ look, render }) => {
+      const slug = iconSlug(icon.name);
+      download(await exportIcon(slug, icon.geometry, look.export, render), `${slug}.zip`);
+    });
+
+  const exportSetZip = () => {
+    const items = setItems;
+    const filename = `${iconSlug(setLabel.replace(/^Export | \(.*$/g, ""))}.zip`;
+    return runExport("set", async ({ signal, look, render, progress }) => {
+      const result = await exportSet(items, look, render, { signal, onProgress: (n) => progress(n, items.length) });
+      if (!result) return;
+      download(result.zip, filename);
+      setStatus(doneMessage(result.ok, result.failed));
+    });
+  };
+
+  const loadSetFiles = async (files: FileList | null) => {
+    const list = [...(files ?? [])];
+    if (list.length > 0) setSetFiles(await Promise.all(list.map(async (file) => ({ name: file.name, svg: await file.text() }))));
   };
 
   return (
@@ -235,6 +304,38 @@ export function App() {
         </section>
         <section className="panel-section">
           <h2>Export</h2>
+          <CheckboxGroup legend="Sizes (px)" field="sizes" options={SIZES} format={(size) => String(size)} />
+          <CheckboxGroup legend="Scales" field="scales" options={SCALES} format={(scale) => `${scale}x`} />
+          <button type="button" disabled={exporting !== null} aria-busy={exporting?.kind === "png"} onClick={() => void exportPng()}>
+            {exporting?.kind === "png" && <span className="spinner" aria-hidden="true" />}
+            Export PNG
+          </button>
+          <button type="button" disabled={exporting !== null || setItems.length === 0} aria-busy={exporting?.kind === "set"} onClick={() => void exportSetZip()}>
+            {exporting?.kind === "set" && <span className="spinner" aria-hidden="true" />}
+            {setLabel}
+          </button>
+          <button type="button" onClick={() => setInput.current?.click()}>
+            Add SVGs…
+          </button>
+          <input
+            ref={setInput}
+            type="file"
+            accept=".svg,image/svg+xml"
+            multiple
+            hidden
+            onChange={(event) => {
+              void loadSetFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          <div className="export-status" aria-live="polite">
+            {exporting?.progress ? `Rendering ${exporting.progress.n} of ${exporting.progress.total}…` : status}
+          </div>
+          {exporting?.kind === "set" && (
+            <button type="button" onClick={() => exporting.controller.abort()}>
+              Cancel
+            </button>
+          )}
         </section>
       </aside>
     </main>

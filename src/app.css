@@ -263,19 +263,22 @@ fieldset.field legend {
   font-size: 13px;
 }
 
-.toggle {
+.toggle,
+.checkboxes {
   display: flex;
   gap: 16px;
 }
 
-.toggle label {
+.toggle label,
+.checkboxes label {
   display: inline-flex;
   gap: 6px;
   align-items: center;
   font-size: 13px;
 }
 
-.toggle legend {
+.toggle legend,
+.checkboxes legend {
   float: left;
   width: 100%;
 }
@@ -377,4 +380,25 @@ fieldset.field legend {
 
 .panel input[type="radio"] {
   accent-color: var(--color-ink-900);
+}
+
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.export-status:empty {
+  display: none;
 }

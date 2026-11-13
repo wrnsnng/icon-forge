@@ -73,7 +73,7 @@ export function setLook(next: Look): void {
   for (const listener of listeners) listener();
 }
 
-type Section = "shape" | "material" | "lights" | "camera";
+type Section = "shape" | "material" | "lights" | "camera" | "export";
 
 export function updateLook<S extends Section>(section: S, patch: Partial<Look[S]>): void {
   setLook({ ...current, [section]: { ...current[section], ...patch } });

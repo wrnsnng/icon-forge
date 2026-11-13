@@ -12,6 +12,17 @@ vi.mock("./Viewport", () => ({
     toast ? createElement("div", { key: toast.id, role: "alert" }, toast.message) : null,
 }));
 
+let renderGate: Promise<void> = Promise.resolve();
+vi.mock("./renderPng", () => ({
+  createPngRenderer: async () => ({
+    render: async () => {
+      await renderGate;
+      return new Uint8Array([1]);
+    },
+    dispose: () => {},
+  }),
+}));
+
 let reducedMotion = false;
 
 const INVALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0'";
@@ -294,5 +305,67 @@ describe("Look controls", () => {
     expect(valueText("Exposure")).toBe("0.44");
     for (let i = 0; i < 10; i += 1) press("Exposure", "ArrowLeft");
     expect(valueText("Exposure")).toBe("0.20");
+  });
+});
+
+describe("Export", () => {
+  const buttonNamed = (text: string | RegExp) =>
+    [...container.querySelectorAll("button")].find((button) => (typeof text === "string" ? button.textContent === text : text.test(button.textContent ?? "")));
+  const setButton = () => buttonNamed(/^Export (Zest |Selekt-2 )?set/);
+  const flush = () => act(async () => vi.advanceTimersByTimeAsync(0));
+
+  async function addSvgs(count: number) {
+    const input = container.querySelector<HTMLInputElement>("input[type=file][multiple]");
+    if (!input) throw new Error("Add SVGs input is missing");
+    const files = Array.from({ length: count }, (_, i) => ({ name: `icon-${i}.svg`, text: async () => VALID_SVG }));
+    Object.defineProperty(input, "files", { value: files, configurable: true });
+    act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await flush();
+  }
+
+  it("names the current preset group's set", () => {
+    expect(setButton()?.textContent).toBe("Export Zest set");
+    const select = iconSelect();
+    if (!select) throw new Error("Icon dropdown is missing");
+    act(() => {
+      select.value = "selekt/Add01Icon";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(setButton()?.textContent).toBe("Export Selekt-2 set");
+  });
+
+  it("disables Export set for a custom icon until SVGs are added", async () => {
+    paste(VALID_SVG);
+    expect(setButton()?.disabled).toBe(true);
+    await addSvgs(3);
+    expect(setButton()?.textContent).toBe("Export set (3 SVGs)");
+    expect(setButton()?.disabled).toBe(false);
+  });
+
+  it("shows progress, and cancelling downloads nothing and re-enables the buttons", async () => {
+    const createObjectURL = vi.fn(() => "blob:zip");
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL, revokeObjectURL: () => {} }));
+    let release = () => {};
+    renderGate = new Promise((resolve) => (release = resolve));
+    act(() => setButton()?.click());
+    await flush();
+    expect(container.querySelector("[aria-live=polite]")?.textContent).toBe("Rendering 1 of 12…");
+    expect(setButton()?.disabled).toBe(true);
+    expect(buttonNamed("Export PNG")?.disabled).toBe(true);
+    act(() => buttonNamed("Cancel")?.click());
+    release();
+    await flush();
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(setButton()?.disabled).toBe(false);
+    expect(buttonNamed("Export PNG")?.disabled).toBe(false);
+    expect(buttonNamed("Cancel")).toBeUndefined();
+  });
+
+  it("reports the exported count when a set finishes", async () => {
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: () => "blob:zip", revokeObjectURL: () => {} }));
+    renderGate = Promise.resolve();
+    act(() => setButton()?.click());
+    await flush();
+    expect(container.querySelector("[aria-live=polite]")?.textContent).toBe("Exported 12 icons.");
   });
 });

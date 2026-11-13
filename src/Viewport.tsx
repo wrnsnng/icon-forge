@@ -2,7 +2,7 @@ import { Environment, MeshTransmissionMaterial, OrbitControls, useProgress } fro
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, DepthOfField, EffectComposer, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
-import { Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { BufferAttribute, BufferGeometry, Euler, ExtrudeGeometry, MathUtils, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Group, type Shape } from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { TessellateModifier } from "three/addons/modifiers/TessellateModifier.js";
@@ -16,12 +16,13 @@ const LOADING_LIGHTING = "Loading lighting…";
 const DROP_OVERLAY = "Drop SVG to load";
 const WEBGL_ERROR = "Icon Forge needs WebGL 2, which isn't available in this browser.";
 const CAMERA_DISTANCE = 3;
+export const CAMERA_FOV = 30;
 const DEPTH_AT_100 = 0.2;
 const MAX_BEVEL = 0.04;
 const BEVEL_SEGMENTS = 6;
 const BEVEL_STROKE_FRACTION = 0.4;
 const BULGE_HEIGHT = 0.1;
-const GLOW_TINT = 0.2;
+export const GLOW_TINT = 0.2;
 const BULGE_EDGE = 0.012;
 const OUTLINE_DIVISIONS = 12;
 const OUTLINE_CELL = 0.025;
@@ -31,7 +32,7 @@ const ZOOM_KEY_STEP = 10;
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const VIEWPORT_LABEL = "3D preview, use arrow keys to orbit";
-const HDRI = "/hdri/studio_small_09_1k.hdr";
+export const HDRI = "/hdri/studio_small_09_1k.hdr";
 
 const hasWebGL2 = (() => {
   const gl = document.createElement("canvas").getContext("webgl2");
@@ -41,8 +42,7 @@ const hasWebGL2 = (() => {
 
 const distanceFor = (zoom: number) => (CAMERA_DISTANCE * 100) / zoom;
 
-function initialCameraPosition(): [number, number, number] {
-  const { azimuth, elevation, zoom } = getLook().camera;
+export function cameraPosition({ azimuth, elevation, zoom }: Look["camera"]): [number, number, number] {
   const distance = distanceFor(zoom);
   const az = (azimuth * Math.PI) / 180;
   const el = (elevation * Math.PI) / 180;
@@ -150,6 +150,15 @@ export function cushion(icon: IconGeometry, shape: Pick<Look["shape"], "depth" |
   return { caps, sides, lift };
 }
 
+export function iconGeometry(icon: IconGeometry, shape: Look["shape"]): BufferGeometry {
+  if (shape.bulge === 0) return flatGeometry(icon, shape);
+  const base = cushion(icon, shape);
+  const geometry = bulgedGeometry(base, shape.bulge);
+  base.caps.dispose();
+  base.sides.dispose();
+  return geometry;
+}
+
 export function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): BufferGeometry {
   const height = (bulge / 100) * BULGE_HEIGHT;
   const swollen = caps.clone();
@@ -243,6 +252,13 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
   const camera = useThree((state) => state.camera);
   const zoom = useLook((look) => look.camera.zoom);
 
+  const saveAngles = useCallback(() => {
+    const offset = camera.position.clone().sub(controls.current?.target ?? new Vector3());
+    const azimuth = MathUtils.radToDeg(Math.atan2(offset.x, offset.z));
+    const elevation = MathUtils.radToDeg(Math.asin(MathUtils.clamp(offset.y / offset.length(), -1, 1)));
+    updateLook("camera", { azimuth, elevation });
+  }, [camera]);
+
   useEffect(() => {
     const target = controls.current?.target ?? new Vector3();
     const offset = camera.position.clone().sub(target);
@@ -261,6 +277,7 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
       spherical.phi = MathUtils.clamp(spherical.phi + dPhi, 0.01, Math.PI - 0.01);
       camera.position.copy(target).add(new Vector3().setFromSpherical(spherical));
       controls.current?.update();
+      saveAngles();
     };
     const setZoom = (delta: number) =>
       updateLook("camera", { zoom: MathUtils.clamp(getLook().camera.zoom + delta, MIN_ZOOM, MAX_ZOOM) });
@@ -282,7 +299,7 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
     };
     element.addEventListener("keydown", onKeyDown);
     return () => element.removeEventListener("keydown", onKeyDown);
-  }, [camera, keyTarget, spin, onSpinChange]);
+  }, [camera, keyTarget, spin, onSpinChange, saveAngles]);
 
   const syncZoom = () => {
     const target = controls.current?.target ?? new Vector3();
@@ -298,7 +315,10 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
       minDistance={distanceFor(MAX_ZOOM)}
       maxDistance={distanceFor(MIN_ZOOM)}
       onStart={() => onOrbitingChange(true)}
-      onEnd={() => onOrbitingChange(false)}
+      onEnd={() => {
+        onOrbitingChange(false);
+        saveAngles();
+      }}
       onChange={syncZoom}
     />
   );
@@ -348,7 +368,7 @@ export function Viewport({ icon, dragging, toast, spin, onSpinChange }: Viewport
       style={background === "transparent" ? undefined : { background }}
     >
       <div ref={keyTarget} className="viewport-stage" tabIndex={0} role="application" aria-label={VIEWPORT_LABEL}>
-        <Canvas camera={{ fov: 30, position: initialCameraPosition() }}>
+        <Canvas camera={{ fov: CAMERA_FOV, position: cameraPosition(getLook().camera) }}>
           <Scene icon={icon} spin={spin} keyTarget={keyTarget} onSpinChange={onSpinChange} />
         </Canvas>
       </div>
