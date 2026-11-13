@@ -18,8 +18,8 @@ type Job = { signal: AbortSignal; look: Look; render: RenderPng; progress: (n: n
 
 const EXPORT_FAILED = "Export failed. Try again.";
 const SET_LABELS: Record<string, string> = { [ZEST_GROUP]: "Export Zest set", [SELEKT_GROUP]: "Export Selekt-2 set" };
-const SIZES = [16, 20, 24] as const;
-const SCALES = [1, 2, 4] as const;
+const SIZES: Look["export"]["sizes"] = [16, 20, 24];
+const SCALES: Look["export"]["scales"] = [1, 2, 4];
 
 function download(data: Uint8Array, filename: string) {
   const url = URL.createObjectURL(new Blob([data as BlobPart], { type: "application/zip" }));
@@ -174,15 +174,14 @@ export function App() {
     setExporting({ kind, controller });
     setStatus("");
     const look = getLook();
-    let renderer: Awaited<ReturnType<typeof createPngRenderer>> | null = null;
+    const renderer = createPngRenderer(look);
     try {
-      renderer = await createPngRenderer(look);
       const progress = (n: number, total: number) => setExporting({ kind, controller, progress: { n, total } });
       await work({ signal: controller.signal, look, render: renderer.render, progress });
     } catch {
       showToast(EXPORT_FAILED);
     } finally {
-      renderer?.dispose();
+      renderer.dispose();
       setExporting(null);
     }
   };

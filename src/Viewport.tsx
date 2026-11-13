@@ -2,7 +2,7 @@ import { Environment, MeshTransmissionMaterial, OrbitControls, useProgress } fro
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, DepthOfField, EffectComposer, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Suspense, useCallback, type ReactNode, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { BufferAttribute, BufferGeometry, Euler, ExtrudeGeometry, MathUtils, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Group, type Shape } from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { TessellateModifier } from "three/addons/modifiers/TessellateModifier.js";
@@ -22,7 +22,7 @@ const MAX_BEVEL = 0.04;
 const BEVEL_SEGMENTS = 6;
 const BEVEL_STROKE_FRACTION = 0.4;
 const BULGE_HEIGHT = 0.1;
-export const GLOW_TINT = 0.2;
+const GLOW_TINT = 0.2;
 const BULGE_EDGE = 0.012;
 const OUTLINE_DIVISIONS = 12;
 const OUTLINE_CELL = 0.025;
@@ -32,7 +32,7 @@ const ZOOM_KEY_STEP = 10;
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const VIEWPORT_LABEL = "3D preview, use arrow keys to orbit";
-export const HDRI = "/hdri/studio_small_09_1k.hdr";
+const HDRI = "/hdri/studio_small_09_1k.hdr";
 
 const hasWebGL2 = (() => {
   const gl = document.createElement("canvas").getContext("webgl2");
@@ -150,15 +150,6 @@ export function cushion(icon: IconGeometry, shape: Pick<Look["shape"], "depth" |
   return { caps, sides, lift };
 }
 
-export function iconGeometry(icon: IconGeometry, shape: Look["shape"]): BufferGeometry {
-  if (shape.bulge === 0) return flatGeometry(icon, shape);
-  const base = cushion(icon, shape);
-  const geometry = bulgedGeometry(base, shape.bulge);
-  base.caps.dispose();
-  base.sides.dispose();
-  return geometry;
-}
-
 export function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): BufferGeometry {
   const height = (bulge / 100) * BULGE_HEIGHT;
   const swollen = caps.clone();
@@ -170,11 +161,9 @@ export function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): B
   return merged;
 }
 
-function IconMaterial() {
-  const material = useLook((look) => look.material);
-  const accent = useLook((look) => look.accent);
-  const glow = useLook((look) => look.camera.glow);
-  const emissive = { emissive: accent, emissiveIntensity: glow * GLOW_TINT };
+function IconMaterial({ look }: { look: Look }) {
+  const { material, accent } = look;
+  const emissive = { emissive: accent, emissiveIntensity: look.camera.glow * GLOW_TINT };
 
   if (material.type === "clay") {
     return <meshPhysicalMaterial color={material.color} roughness={material.roughness} metalness={0} clearcoat={0} {...emissive} />;
@@ -192,12 +181,8 @@ function IconMaterial() {
   );
 }
 
-function Icon({ icon, spin }: { icon: IconGeometry; spin: boolean }) {
-  const depth = useLook((look) => look.shape.depth);
-  const bevel = useLook((look) => look.shape.bevel);
-  const bulge = useLook((look) => look.shape.bulge);
-  const scaleX = useLook((look) => look.shape.scaleX);
-  const scaleY = useLook((look) => look.shape.scaleY);
+function Icon({ icon, look, spin }: { icon: IconGeometry; look: Look; spin: boolean }) {
+  const { depth, bevel, bulge, scaleX, scaleY } = look.shape;
   const bulging = bulge > 0;
   const base = useMemo(() => (bulging ? cushion(icon, { depth, bevel }) : flatGeometry(icon, { depth, bevel })), [icon, depth, bevel, bulging]);
   const geometry = useMemo(() => (base instanceof BufferGeometry ? base : bulgedGeometry(base, bulge)), [base, bulge]);
@@ -219,31 +204,33 @@ function Icon({ icon, spin }: { icon: IconGeometry; spin: boolean }) {
   return (
     <group ref={turntable}>
       <mesh geometry={geometry} scale={[scaleX / 100, scaleY / 100, 1]}>
-        <IconMaterial />
+        <IconMaterial look={look} />
       </mesh>
     </group>
   );
 }
 
-function Exposure() {
-  const exposure = useLook((look) => look.lights.exposure);
+export function LookScene({ icon, look, spin, children }: { icon: IconGeometry; look: Look; spin: boolean; children?: ReactNode }) {
+  const { exposure, rotation } = look.lights;
+  const { glow, dof, focus, zoom } = look.camera;
+  const environmentRotation = useMemo(() => new Euler(0, MathUtils.degToRad(rotation), 0), [rotation]);
   useFrame(({ gl }) => {
     gl.toneMappingExposure = exposure;
   });
-  return null;
-}
 
-function Effects() {
-  const glow = useLook((look) => look.camera.glow);
-  const dof = useLook((look) => look.camera.dof);
-  const focus = useLook((look) => look.camera.focus);
-  const zoom = useLook((look) => look.camera.zoom);
   return (
-    <EffectComposer multisampling={4}>
-      <Bloom intensity={glow * 4} luminanceThreshold={0.8} mipmapBlur />
-      <DepthOfField worldFocusDistance={distanceFor(zoom) - 1 + 2 * focus} worldFocusRange={0.3} bokehScale={dof * 10} />
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-    </EffectComposer>
+    <>
+      <Suspense fallback={null}>
+        <Environment files={HDRI} environmentRotation={environmentRotation} />
+        <Icon icon={icon} look={look} spin={spin} />
+        {children}
+      </Suspense>
+      <EffectComposer multisampling={4}>
+        <Bloom intensity={glow * 4} luminanceThreshold={0.8} mipmapBlur />
+        <DepthOfField worldFocusDistance={distanceFor(zoom) - 1 + 2 * focus} worldFocusRange={0.3} bokehScale={dof * 10} />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+      </EffectComposer>
+    </>
   );
 }
 
@@ -325,18 +312,12 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
 }
 
 function Scene({ icon, spin, keyTarget, onSpinChange }: { icon: IconGeometry; spin: boolean; keyTarget: RefObject<HTMLDivElement | null>; onSpinChange: (spin: boolean) => void }) {
-  const rotation = useLook((look) => look.lights.rotation);
+  const look = useLook((current) => current);
   const [orbiting, setOrbiting] = useState(false);
-  const environmentRotation = useMemo(() => new Euler(0, MathUtils.degToRad(rotation), 0), [rotation]);
 
   return (
     <>
-      <Exposure />
-      <Suspense fallback={null}>
-        <Environment files={HDRI} environmentRotation={environmentRotation} />
-        <Icon icon={icon} spin={spin && !orbiting} />
-      </Suspense>
-      <Effects />
+      <LookScene icon={icon} look={look} spin={spin && !orbiting} />
       <CameraRig keyTarget={keyTarget} spin={spin} onSpinChange={onSpinChange} onOrbitingChange={setOrbiting} />
     </>
   );

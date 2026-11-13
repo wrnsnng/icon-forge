@@ -13,12 +13,29 @@ export const iconSlug = (name: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "") || "icon";
 
-async function renderPngs(slug: string, icon: IconGeometry, { sizes, scales }: Look["export"], render: RenderPng, prefix = ""): Promise<Zippable> {
+async function renderPngs(
+  slug: string,
+  icon: IconGeometry,
+  { sizes, scales }: Look["export"],
+  render: RenderPng,
+  { prefix = "", signal }: { prefix?: string; signal?: AbortSignal } = {},
+): Promise<Zippable> {
   const files: Zippable = {};
   for (const size of sizes) {
-    for (const scale of scales) files[`${prefix}${slug}-${size}@${scale}x.png`] = await render(icon, size * scale);
+    for (const scale of scales) {
+      if (signal?.aborted) return files;
+      files[`${prefix}${slug}-${size}@${scale}x.png`] = await render(icon, size * scale);
+    }
   }
   return files;
+}
+
+function uniqueSlug(name: string, taken: Set<string>): string {
+  const base = iconSlug(name);
+  let slug = base;
+  for (let n = 2; taken.has(slug); n += 1) slug = `${base}-${n}`;
+  taken.add(slug);
+  return slug;
 }
 
 export async function exportIcon(slug: string, icon: IconGeometry, sizes: Look["export"], render: RenderPng): Promise<Uint8Array> {
@@ -33,13 +50,17 @@ export async function exportSet(
 ): Promise<SetResult | null> {
   const files: Zippable = { "look.json": strToU8(JSON.stringify(look, null, 2)) };
   const errors: string[] = [];
+  const taken = new Set<string>();
   for (const [index, item] of items.entries()) {
     if (signal?.aborted) return null;
     onProgress?.(index + 1);
-    const slug = iconSlug(item.name);
     const icon = buildIcon(item.svg);
-    if (icon.ok) Object.assign(files, await renderPngs(slug, icon, look.export, render, `${slug}/`));
-    else errors.push(`${item.name}: ${icon.error}\n`);
+    if (!icon.ok) {
+      errors.push(`${item.name}: ${icon.error}\n`);
+      continue;
+    }
+    const slug = uniqueSlug(item.name, taken);
+    Object.assign(files, await renderPngs(slug, icon, look.export, render, { prefix: `${slug}/`, signal }));
   }
   if (signal?.aborted) return null;
   if (errors.length > 0) files["errors.txt"] = strToU8(errors.join(""));

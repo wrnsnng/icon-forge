@@ -14,7 +14,7 @@ vi.mock("./Viewport", () => ({
 
 let renderGate: Promise<void> = Promise.resolve();
 vi.mock("./renderPng", () => ({
-  createPngRenderer: async () => ({
+  createPngRenderer: () => ({
     render: async () => {
       await renderGate;
       return new Uint8Array([1]);
