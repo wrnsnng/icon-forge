@@ -1,10 +1,11 @@
-import { Environment, MeshTransmissionMaterial, OrbitControls, useProgress } from "@react-three/drei";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Environment, MeshTransmissionMaterial, OrbitControls, useEnvironment, useProgress } from "@react-three/drei";
+import { Canvas, extend, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, DepthOfField, EffectComposer, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 import { Suspense, useCallback, type ReactNode, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { BufferAttribute, BufferGeometry, Euler, ExtrudeGeometry, MathUtils, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Group, type Shape } from "three";
+import { BufferAttribute, BufferGeometry, EquirectangularReflectionMapping, Euler, ExtrudeGeometry, Group, MathUtils, Mesh, MeshPhysicalMaterial, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Shape, type Texture } from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { TessellateModifier } from "three/addons/modifiers/TessellateModifier.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { getLook, updateLook, useLook, type Look } from "./look";
@@ -32,7 +33,15 @@ const ZOOM_KEY_STEP = 10;
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const VIEWPORT_LABEL = "3D preview, use arrow keys to orbit";
-const HDRI = "/hdri/studio_small_09_1k.hdr";
+export const HDRI = "/hdri/studio_small_09_1k.hdr";
+
+export async function loadStudioEnvironment(): Promise<Texture> {
+  const texture = await new HDRLoader().loadAsync(HDRI);
+  texture.mapping = EquirectangularReflectionMapping;
+  return texture;
+}
+
+extend({ Group, Mesh, MeshPhysicalMaterial });
 
 const hasWebGL2 = (() => {
   const gl = document.createElement("canvas").getContext("webgl2");
@@ -210,7 +219,9 @@ function Icon({ icon, look, spin }: { icon: IconGeometry; look: Look; spin: bool
   );
 }
 
-export function LookScene({ icon, look, spin, children }: { icon: IconGeometry; look: Look; spin: boolean; children?: ReactNode }) {
+type LookSceneProps = { icon: IconGeometry; look: Look; spin: boolean; environment: Texture; children?: ReactNode };
+
+export function LookScene({ icon, look, spin, environment, children }: LookSceneProps) {
   const { exposure, rotation } = look.lights;
   const { glow, dof, focus, zoom } = look.camera;
   const environmentRotation = useMemo(() => new Euler(0, MathUtils.degToRad(rotation), 0), [rotation]);
@@ -220,11 +231,9 @@ export function LookScene({ icon, look, spin, children }: { icon: IconGeometry; 
 
   return (
     <>
-      <Suspense fallback={null}>
-        <Environment files={HDRI} environmentRotation={environmentRotation} />
-        <Icon icon={icon} look={look} spin={spin} />
-        {children}
-      </Suspense>
+      <Environment map={environment} environmentRotation={environmentRotation} />
+      <Icon icon={icon} look={look} spin={spin} />
+      {children}
       <EffectComposer multisampling={4}>
         <Bloom intensity={glow * 4} luminanceThreshold={0.8} mipmapBlur />
         <DepthOfField worldFocusDistance={distanceFor(zoom) - 1 + 2 * focus} worldFocusRange={0.3} bokehScale={dof * 10} />
@@ -232,6 +241,11 @@ export function LookScene({ icon, look, spin, children }: { icon: IconGeometry; 
       </EffectComposer>
     </>
   );
+}
+
+export function StudioScene(props: Omit<LookSceneProps, "environment">) {
+  const environment = useEnvironment({ files: HDRI });
+  return <LookScene environment={environment} {...props} />;
 }
 
 function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTarget: RefObject<HTMLDivElement | null>; spin: boolean; onSpinChange: (spin: boolean) => void; onOrbitingChange: (orbiting: boolean) => void }) {
@@ -317,7 +331,9 @@ function Scene({ icon, spin, keyTarget, onSpinChange }: { icon: IconGeometry; sp
 
   return (
     <>
-      <LookScene icon={icon} look={look} spin={spin && !orbiting} />
+      <Suspense fallback={null}>
+        <StudioScene icon={icon} look={look} spin={spin && !orbiting} />
+      </Suspense>
       <CameraRig keyTarget={keyTarget} spin={spin} onSpinChange={onSpinChange} onOrbitingChange={setOrbiting} />
     </>
   );

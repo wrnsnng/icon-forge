@@ -3,7 +3,7 @@ import { Component, useEffect, type ReactNode } from "react";
 import type { RenderPng } from "./exportPng";
 import type { Look } from "./look";
 import type { IconGeometry } from "./svgIcon";
-import { CAMERA_FOV, cameraPosition, LookScene } from "./Viewport";
+import { CAMERA_FOV, cameraPosition, loadStudioEnvironment, LookScene } from "./Viewport";
 
 const SUPERSAMPLE = 4;
 
@@ -35,6 +35,7 @@ function canvas2d(size: number) {
 
 export function createPngRenderer(look: Look): { render: RenderPng; dispose: () => void } {
   const root = createRoot(document.createElement("canvas"));
+  const environment = loadStudioEnvironment();
 
   const draw = async (icon: IconGeometry, size: number) => {
     await root.configure({
@@ -44,10 +45,11 @@ export function createPngRenderer(look: Look): { render: RenderPng; dispose: () 
       dpr: 1,
       frameloop: "never",
     });
+    const texture = await environment;
     const state = await new Promise<RootState>((resolve, reject) =>
       root.render(
         <FailOnError onError={reject}>
-          <LookScene icon={icon} look={look} spin={false}>
+          <LookScene icon={icon} look={look} spin={false} environment={texture}>
             <Ready onReady={resolve} />
           </LookScene>
         </FailOnError>,
@@ -71,5 +73,9 @@ export function createPngRenderer(look: Look): { render: RenderPng; dispose: () 
     return new Uint8Array(await blob.arrayBuffer());
   };
 
-  return { render, dispose: () => root.unmount() };
+  const dispose = () => {
+    root.unmount();
+    environment.then((texture) => texture.dispose(), () => undefined);
+  };
+  return { render, dispose };
 }
