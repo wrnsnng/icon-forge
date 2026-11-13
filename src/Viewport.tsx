@@ -1,10 +1,11 @@
-import { Environment, MeshTransmissionMaterial, OrbitControls, useProgress } from "@react-three/drei";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Environment, MeshTransmissionMaterial, OrbitControls, useEnvironment, useProgress } from "@react-three/drei";
+import { Canvas, extend, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, DepthOfField, EffectComposer, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
-import { Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { BufferAttribute, BufferGeometry, Euler, ExtrudeGeometry, MathUtils, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Group, type Shape } from "three";
+import { Suspense, useCallback, type ReactNode, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { BufferAttribute, BufferGeometry, EquirectangularReflectionMapping, Euler, ExtrudeGeometry, Group, MathUtils, Mesh, MeshPhysicalMaterial, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Shape, type Texture } from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { TessellateModifier } from "three/addons/modifiers/TessellateModifier.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { getLook, updateLook, useLook, type Look } from "./look";
@@ -16,6 +17,7 @@ const LOADING_LIGHTING = "Loading lighting…";
 const DROP_OVERLAY = "Drop SVG to load";
 const WEBGL_ERROR = "Icon Forge needs WebGL 2, which isn't available in this browser.";
 const CAMERA_DISTANCE = 3;
+export const CAMERA_FOV = 30;
 const DEPTH_AT_100 = 0.2;
 const MAX_BEVEL = 0.04;
 const BEVEL_SEGMENTS = 6;
@@ -31,7 +33,15 @@ const ZOOM_KEY_STEP = 10;
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const VIEWPORT_LABEL = "3D preview, use arrow keys to orbit";
-const HDRI = "/hdri/studio_small_09_1k.hdr";
+export const HDRI = "/hdri/studio_small_09_1k.hdr";
+
+export async function loadStudioEnvironment(): Promise<Texture> {
+  const texture = await new HDRLoader().loadAsync(HDRI);
+  texture.mapping = EquirectangularReflectionMapping;
+  return texture;
+}
+
+extend({ Group, Mesh, MeshPhysicalMaterial });
 
 const hasWebGL2 = (() => {
   const gl = document.createElement("canvas").getContext("webgl2");
@@ -41,8 +51,7 @@ const hasWebGL2 = (() => {
 
 const distanceFor = (zoom: number) => (CAMERA_DISTANCE * 100) / zoom;
 
-function initialCameraPosition(): [number, number, number] {
-  const { azimuth, elevation, zoom } = getLook().camera;
+export function cameraPosition({ azimuth, elevation, zoom }: Look["camera"]): [number, number, number] {
   const distance = distanceFor(zoom);
   const az = (azimuth * Math.PI) / 180;
   const el = (elevation * Math.PI) / 180;
@@ -161,11 +170,9 @@ export function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): B
   return merged;
 }
 
-function IconMaterial() {
-  const material = useLook((look) => look.material);
-  const accent = useLook((look) => look.accent);
-  const glow = useLook((look) => look.camera.glow);
-  const emissive = { emissive: accent, emissiveIntensity: glow * GLOW_TINT };
+function IconMaterial({ look }: { look: Look }) {
+  const { material, accent } = look;
+  const emissive = { emissive: accent, emissiveIntensity: look.camera.glow * GLOW_TINT };
 
   if (material.type === "clay") {
     return <meshPhysicalMaterial color={material.color} roughness={material.roughness} metalness={0} clearcoat={0} {...emissive} />;
@@ -183,12 +190,8 @@ function IconMaterial() {
   );
 }
 
-function Icon({ icon, spin }: { icon: IconGeometry; spin: boolean }) {
-  const depth = useLook((look) => look.shape.depth);
-  const bevel = useLook((look) => look.shape.bevel);
-  const bulge = useLook((look) => look.shape.bulge);
-  const scaleX = useLook((look) => look.shape.scaleX);
-  const scaleY = useLook((look) => look.shape.scaleY);
+function Icon({ icon, look, spin }: { icon: IconGeometry; look: Look; spin: boolean }) {
+  const { depth, bevel, bulge, scaleX, scaleY } = look.shape;
   const bulging = bulge > 0;
   const base = useMemo(() => (bulging ? cushion(icon, { depth, bevel }) : flatGeometry(icon, { depth, bevel })), [icon, depth, bevel, bulging]);
   const geometry = useMemo(() => (base instanceof BufferGeometry ? base : bulgedGeometry(base, bulge)), [base, bulge]);
@@ -210,38 +213,52 @@ function Icon({ icon, spin }: { icon: IconGeometry; spin: boolean }) {
   return (
     <group ref={turntable}>
       <mesh geometry={geometry} scale={[scaleX / 100, scaleY / 100, 1]}>
-        <IconMaterial />
+        <IconMaterial look={look} />
       </mesh>
     </group>
   );
 }
 
-function Exposure() {
-  const exposure = useLook((look) => look.lights.exposure);
+type LookSceneProps = { icon: IconGeometry; look: Look; spin: boolean; environment: Texture; children?: ReactNode };
+
+export function LookScene({ icon, look, spin, environment, children }: LookSceneProps) {
+  const { exposure, rotation } = look.lights;
+  const { glow, dof, focus, zoom } = look.camera;
+  const environmentRotation = useMemo(() => new Euler(0, MathUtils.degToRad(rotation), 0), [rotation]);
   useFrame(({ gl }) => {
     gl.toneMappingExposure = exposure;
   });
-  return null;
+
+  return (
+    <>
+      <Environment map={environment} environmentRotation={environmentRotation} />
+      <Icon icon={icon} look={look} spin={spin} />
+      {children}
+      <EffectComposer multisampling={4}>
+        <Bloom intensity={glow * 4} luminanceThreshold={0.8} mipmapBlur />
+        <DepthOfField worldFocusDistance={distanceFor(zoom) - 1 + 2 * focus} worldFocusRange={0.3} bokehScale={dof * 10} />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+      </EffectComposer>
+    </>
+  );
 }
 
-function Effects() {
-  const glow = useLook((look) => look.camera.glow);
-  const dof = useLook((look) => look.camera.dof);
-  const focus = useLook((look) => look.camera.focus);
-  const zoom = useLook((look) => look.camera.zoom);
-  return (
-    <EffectComposer multisampling={4}>
-      <Bloom intensity={glow * 4} luminanceThreshold={0.8} mipmapBlur />
-      <DepthOfField worldFocusDistance={distanceFor(zoom) - 1 + 2 * focus} worldFocusRange={0.3} bokehScale={dof * 10} />
-      <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-    </EffectComposer>
-  );
+export function StudioScene(props: Omit<LookSceneProps, "environment">) {
+  const environment = useEnvironment({ files: HDRI });
+  return <LookScene environment={environment} {...props} />;
 }
 
 function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTarget: RefObject<HTMLDivElement | null>; spin: boolean; onSpinChange: (spin: boolean) => void; onOrbitingChange: (orbiting: boolean) => void }) {
   const controls = useRef<OrbitControlsImpl>(null);
   const camera = useThree((state) => state.camera);
   const zoom = useLook((look) => look.camera.zoom);
+
+  const saveAngles = useCallback(() => {
+    const offset = camera.position.clone().sub(controls.current?.target ?? new Vector3());
+    const azimuth = MathUtils.radToDeg(Math.atan2(offset.x, offset.z));
+    const elevation = MathUtils.radToDeg(Math.asin(MathUtils.clamp(offset.y / offset.length(), -1, 1)));
+    updateLook("camera", { azimuth, elevation });
+  }, [camera]);
 
   useEffect(() => {
     const target = controls.current?.target ?? new Vector3();
@@ -261,6 +278,7 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
       spherical.phi = MathUtils.clamp(spherical.phi + dPhi, 0.01, Math.PI - 0.01);
       camera.position.copy(target).add(new Vector3().setFromSpherical(spherical));
       controls.current?.update();
+      saveAngles();
     };
     const setZoom = (delta: number) =>
       updateLook("camera", { zoom: MathUtils.clamp(getLook().camera.zoom + delta, MIN_ZOOM, MAX_ZOOM) });
@@ -282,7 +300,7 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
     };
     element.addEventListener("keydown", onKeyDown);
     return () => element.removeEventListener("keydown", onKeyDown);
-  }, [camera, keyTarget, spin, onSpinChange]);
+  }, [camera, keyTarget, spin, onSpinChange, saveAngles]);
 
   const syncZoom = () => {
     const target = controls.current?.target ?? new Vector3();
@@ -298,25 +316,24 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
       minDistance={distanceFor(MAX_ZOOM)}
       maxDistance={distanceFor(MIN_ZOOM)}
       onStart={() => onOrbitingChange(true)}
-      onEnd={() => onOrbitingChange(false)}
+      onEnd={() => {
+        onOrbitingChange(false);
+        saveAngles();
+      }}
       onChange={syncZoom}
     />
   );
 }
 
 function Scene({ icon, spin, keyTarget, onSpinChange }: { icon: IconGeometry; spin: boolean; keyTarget: RefObject<HTMLDivElement | null>; onSpinChange: (spin: boolean) => void }) {
-  const rotation = useLook((look) => look.lights.rotation);
+  const look = useLook((current) => current);
   const [orbiting, setOrbiting] = useState(false);
-  const environmentRotation = useMemo(() => new Euler(0, MathUtils.degToRad(rotation), 0), [rotation]);
 
   return (
     <>
-      <Exposure />
       <Suspense fallback={null}>
-        <Environment files={HDRI} environmentRotation={environmentRotation} />
-        <Icon icon={icon} spin={spin && !orbiting} />
+        <StudioScene icon={icon} look={look} spin={spin && !orbiting} />
       </Suspense>
-      <Effects />
       <CameraRig keyTarget={keyTarget} spin={spin} onSpinChange={onSpinChange} onOrbitingChange={setOrbiting} />
     </>
   );
@@ -348,7 +365,7 @@ export function Viewport({ icon, dragging, toast, spin, onSpinChange }: Viewport
       style={background === "transparent" ? undefined : { background }}
     >
       <div ref={keyTarget} className="viewport-stage" tabIndex={0} role="application" aria-label={VIEWPORT_LABEL}>
-        <Canvas camera={{ fov: 30, position: initialCameraPosition() }}>
+        <Canvas camera={{ fov: CAMERA_FOV, position: cameraPosition(getLook().camera) }}>
           <Scene icon={icon} spin={spin} keyTarget={keyTarget} onSpinChange={onSpinChange} />
         </Canvas>
       </div>

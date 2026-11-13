@@ -212,3 +212,32 @@ export function PresetPicker() {
     </div>
   );
 }
+
+export function CheckboxGroup<F extends keyof Look["export"]>({
+  legend,
+  field,
+  options,
+  format,
+}: {
+  legend: string;
+  field: F;
+  options: Look["export"][F];
+  format: (value: number) => string;
+}) {
+  const checked: readonly number[] = useLook((look) => look.export[field]);
+  const toggle = (value: number) => {
+    const next = options.filter((option) => (option === value ? !checked.includes(value) : checked.includes(option)));
+    updateLook("export", { [field]: next });
+  };
+  return (
+    <fieldset className="field checkboxes">
+      <legend>{legend}</legend>
+      {options.map((option) => (
+        <label key={option}>
+          <input type="checkbox" checked={checked.includes(option)} onChange={() => toggle(option)} />
+          {format(option)}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
