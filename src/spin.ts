@@ -36,7 +36,24 @@ export type SpinStage = {
   renderFrame: (turn: number) => void;
 };
 
-export async function encodeSpin({ canvas, renderFrame }: SpinStage, { codec, config }: SpinCodec, onSecond: (seconds: number) => void): Promise<Blob> {
+function dequeuedOrAborted(encoder: VideoEncoder, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      encoder.removeEventListener("dequeue", done);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    encoder.addEventListener("dequeue", done);
+    signal.addEventListener("abort", done);
+  });
+}
+
+export async function encodeSpin(
+  { canvas, renderFrame }: SpinStage,
+  { codec, config }: SpinCodec,
+  onSecond: (seconds: number) => void,
+  signal: AbortSignal,
+): Promise<Blob | null> {
   const target = new BufferTarget();
   const output = new Output({ format: new WebMOutputFormat(), target });
   const source = new EncodedVideoPacketSource(codec);
@@ -62,6 +79,8 @@ export async function encodeSpin({ canvas, renderFrame }: SpinStage, { codec, co
     await output.start();
     encoder.configure(config);
     for (let frame = 0; frame < SPIN_FRAMES; frame += 1) {
+      while (encoder.encodeQueueSize >= MAX_QUEUED_FRAMES && !signal.aborted) await dequeuedOrAborted(encoder, signal);
+      if (signal.aborted) return null;
       check();
       renderFrame(frame / SPIN_FRAMES);
       const videoFrame = new VideoFrame(canvas, { timestamp: (frame * 1e6) / SPIN_FPS, duration: 1e6 / SPIN_FPS });
@@ -70,11 +89,11 @@ export async function encodeSpin({ canvas, renderFrame }: SpinStage, { codec, co
       } finally {
         videoFrame.close();
       }
-      if (encoder.encodeQueueSize > MAX_QUEUED_FRAMES) await new Promise((resolve) => encoder.addEventListener("dequeue", resolve, { once: true }));
     }
     check();
     await encoder.flush();
     await written;
+    if (signal.aborted) return null;
     check();
     await output.finalize();
     if (!target.buffer) throw new Error("The WebM muxer produced no data");

@@ -6,7 +6,14 @@ import { encodeSpin, SPIN_SECONDS, SPIN_SIZE, type SpinCodec } from "./spin";
 import type { IconGeometry } from "./svgIcon";
 import { CAMERA_FOV, cameraPosition, loadStudioEnvironment, LookScene, TURNTABLE } from "./Viewport";
 
-export async function renderSpin(icon: IconGeometry, look: Look, background: string, codec: SpinCodec, onSecond: (seconds: number) => void): Promise<Blob> {
+export async function renderSpin(
+  icon: IconGeometry,
+  look: Look,
+  background: string,
+  codec: SpinCodec,
+  onSecond: (seconds: number) => void,
+  signal: AbortSignal,
+): Promise<Blob | null> {
   const canvas = document.createElement("canvas");
   const root = createRoot(canvas);
   const environment = loadStudioEnvironment();
@@ -28,6 +35,7 @@ export async function renderSpin(icon: IconGeometry, look: Look, background: str
         </FailOnError>,
       ),
     );
+    if (signal.aborted) return null;
     const turntable = state.scene.getObjectByName(TURNTABLE);
     if (!turntable) throw new Error("The offscreen icon didn't mount");
     state.scene.background = new Color(background);
@@ -42,6 +50,7 @@ export async function renderSpin(icon: IconGeometry, look: Look, background: str
       },
       codec,
       onSecond,
+      signal,
     );
   } finally {
     root.unmount();

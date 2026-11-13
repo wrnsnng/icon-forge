@@ -24,11 +24,11 @@ vi.mock("./renderPng", () => ({
   }),
 }));
 
-let spinResult: { resolve: (video: Blob) => void; reject: (error: Error) => void } | null = null;
+let spinResult: { resolve: (video: Blob | null) => void; reject: (error: Error) => void; signal: AbortSignal } | null = null;
 vi.mock("./renderSpin", () => ({
-  renderSpin: () =>
-    new Promise<Blob>((resolve, reject) => {
-      spinResult = { resolve, reject };
+  renderSpin: (...args: unknown[]) =>
+    new Promise<Blob | null>((resolve, reject) => {
+      spinResult = { resolve, reject, signal: args[5] as AbortSignal };
     }),
 }));
 
@@ -629,6 +629,23 @@ describe("Export lock", () => {
     await act(async () => spinResult?.reject(new Error("encoder died")));
     expect(alertText()).toBe("Export failed. Try again.");
     expect(downloads).toEqual([]);
+    expect(disabledControls()).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("aborts a running spin export when the app unmounts", () => {
+    act(() => control("Export spin")?.click());
+    const signal = spinResult?.signal;
+    expect(signal?.aborted).toBe(false);
+    act(() => root.unmount());
+    expect(signal?.aborted).toBe(true);
+    mount();
+  });
+
+  it("downloads nothing, shows no error and releases every export when a spin ends aborted", async () => {
+    act(() => control("Export spin")?.click());
+    await act(async () => spinResult?.resolve(null));
+    expect(downloads).toEqual([]);
+    expect(alertText()).toBeNull();
     expect(disabledControls()).toEqual([false, false, false, false, false, false]);
   });
 

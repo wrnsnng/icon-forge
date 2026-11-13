@@ -118,6 +118,9 @@ export function App() {
   const [status, setStatus] = useState<{ text: string; icon: Icon; files: SetItem[] } | null>(null);
   const nothingSelected = useLook(({ export: { sizes, scales } }) => sizes.length === 0 || scales.length === 0);
   const [spinCodec, setSpinCodec] = useState<SpinCodec | null | undefined>(undefined);
+  const runningJob = useRef<AbortController | null>(null);
+
+  useEffect(() => () => runningJob.current?.abort(), []);
   const spinText = useLook((look) => spinHelper(look, exporting?.seconds, spinCodec));
 
   useEffect(() => {
@@ -230,13 +233,15 @@ export function App() {
 
   const runExport = async (kind: ExportKind, work: (job: Job) => Promise<void>) => {
     const controller = new AbortController();
+    runningJob.current = controller;
     setExporting({ kind, controller });
     setStatus(null);
     try {
       await work({ signal: controller.signal, update: (patch) => setExporting({ kind, controller, ...patch }) });
     } catch {
-      showToast(EXPORT_FAILED);
+      if (!controller.signal.aborted) showToast(EXPORT_FAILED);
     } finally {
+      if (runningJob.current === controller) runningJob.current = null;
       setExporting(null);
     }
   };
@@ -273,12 +278,12 @@ export function App() {
   };
 
   const exportSpin = () =>
-    runExport("spin", async ({ update }) => {
+    runExport("spin", async ({ signal, update }) => {
       if (!spinCodec) return;
       update({ seconds: 0 });
       const look = getLook();
-      const video = await renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }));
-      download(video, "icon-spin.webm");
+      const video = await renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }), signal);
+      if (video) download(video, "icon-spin.webm");
     });
 
   const exportGlbFile = () =>

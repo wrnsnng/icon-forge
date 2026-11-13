@@ -34,16 +34,21 @@ let supported: string[];
 let encoders: FakeEncoder[];
 let failOnFrame: number | null;
 
-class FakeEncoder {
+class FakeEncoder extends EventTarget {
   static isConfigSupported = async (config: VideoEncoderConfig) => ({ supported: supported.includes(config.codec), config });
   state: "unconfigured" | "configured" | "closed" = "unconfigured";
-  encodeQueueSize = 0;
   config: VideoEncoderConfig | null = null;
   encoded: Encoded[] = [];
   frames: FakeFrame[] = [];
+  deepestQueue = 0;
+  private queued: FakeChunk[] = [];
   private held: FakeChunk[] = [];
   constructor(private readonly init: VideoEncoderInit) {
+    super();
     encoders.push(this);
+  }
+  get encodeQueueSize() {
+    return this.queued.length;
   }
   configure(config: VideoEncoderConfig) {
     this.config = config;
@@ -57,10 +62,19 @@ class FakeEncoder {
     const keyFrame = options?.keyFrame ?? false;
     this.frames.push(frame);
     this.encoded.push({ timestamp: frame.timestamp, duration: frame.duration, keyFrame });
-    this.held.push(new FakeChunk(keyFrame ? "key" : "delta", frame.timestamp, frame.duration));
+    this.queued.push(new FakeChunk(keyFrame ? "key" : "delta", frame.timestamp, frame.duration));
+    this.deepestQueue = Math.max(this.deepestQueue, this.queued.length);
+    setTimeout(() => this.encodeNext());
+  }
+  private encodeNext() {
+    const chunk = this.queued.shift();
+    if (!chunk || this.state === "closed") return;
+    this.held.push(chunk);
+    this.dispatchEvent(new Event("dequeue"));
   }
   async flush() {
     if (this.state !== "configured") throw new DOMException("not configured", "InvalidStateError");
+    while (this.queued.length > 0) this.encodeNext();
     this.held.forEach((chunk, i) =>
       this.init.output(chunk as unknown as EncodedVideoChunk, i === 0 ? { decoderConfig: { codec: this.config?.codec ?? "", codedWidth: 1080, codedHeight: 1080 } } : undefined),
     );
@@ -69,7 +83,6 @@ class FakeEncoder {
   close() {
     this.state = "closed";
   }
-  addEventListener() {}
 }
 
 const VP9: SpinCodec = { codec: "vp9", config: { codec: "vp09.00.10.08", width: 1080, height: 1080, framerate: 30 } };
@@ -92,6 +105,12 @@ async function packetsOf(video: Blob) {
   const sink = new EncodedPacketSink(track);
   for await (const packet of sink.packets()) packets.push(packet);
   return { codec: track.codec, packets, duration: await track.computeDuration() };
+}
+
+async function encoded(video: Promise<Blob | null>) {
+  const blob = await video;
+  if (!blob) throw new Error("No video was produced");
+  return blob;
 }
 
 beforeEach(() => {
@@ -132,12 +151,12 @@ describe("findSpinCodec", () => {
 describe("encodeSpin", () => {
   it("renders exactly 240 orientations, one per 1/240 of a turn, with no 241st", async () => {
     const { turns, stage: s } = stage();
-    await encodeSpin(s, VP9, () => {});
+    await encodeSpin(s, VP9, () => {}, new AbortController().signal);
     expect(turns).toEqual(Array.from({ length: 240 }, (_, i) => i / 240));
   });
 
   it("timestamps frame i at i/30 s from the frame index, keyframes only frame 0, and closes every frame", async () => {
-    await encodeSpin(stage().stage, VP9, () => {});
+    await encodeSpin(stage().stage, VP9, () => {}, new AbortController().signal);
     const [encoder] = encoders;
     expect(encoder?.config).toMatchObject({ codec: "vp09.00.10.08", width: 1080, height: 1080 });
     expect(encoder?.encoded).toEqual(Array.from({ length: 240 }, (_, i) => ({ timestamp: (i * 1e6) / 30, duration: 1e6 / 30, keyFrame: i === 0 })));
@@ -146,7 +165,7 @@ describe("encodeSpin", () => {
   });
 
   it("writes a VP9 WebM of exactly 240 packets and 8.000 s, starting on a keyframe", async () => {
-    const { codec, packets, duration } = await packetsOf(await encodeSpin(stage().stage, VP9, () => {}));
+    const { codec, packets, duration } = await packetsOf(await encoded(encodeSpin(stage().stage, VP9, () => {}, new AbortController().signal)));
     expect(codec).toBe("vp9");
     expect(packets).toHaveLength(240);
     expect(packets[0]?.type).toBe("key");
@@ -159,12 +178,12 @@ describe("encodeSpin", () => {
     supported = ["vp8"];
     const codec = await findSpinCodec();
     if (!codec) throw new Error("VP8 should be chosen");
-    expect((await packetsOf(await encodeSpin(stage().stage, codec, () => {}))).codec).toBe("vp8");
+    expect((await packetsOf(await encoded(encodeSpin(stage().stage, codec, () => {}, new AbortController().signal)))).codec).toBe("vp8");
   });
 
   it("reports whole seconds of video encoded, up to 8", async () => {
     const seconds: number[] = [];
-    await encodeSpin(stage().stage, VP9, (s) => seconds.push(s));
+    await encodeSpin(stage().stage, VP9, (s) => seconds.push(s), new AbortController().signal);
     expect(seconds.at(-1)).toBe(8);
     expect([...new Set(seconds)]).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
@@ -172,7 +191,7 @@ describe("encodeSpin", () => {
   it("closes the encoder and cancels the output when encoding fails", async () => {
     failOnFrame = 100;
     const cancel = vi.spyOn(Output.prototype, "cancel");
-    await expect(encodeSpin(stage().stage, VP9, () => {})).rejects.toThrow("encoder crashed");
+    await expect(encodeSpin(stage().stage, VP9, () => {}, new AbortController().signal)).rejects.toThrow("encoder crashed");
     expect(encoders[0]?.state).toBe("closed");
     expect(cancel).toHaveBeenCalled();
   });
@@ -182,8 +201,55 @@ describe("encodeSpin", () => {
     const failing = { ...stage().stage, renderFrame: (turn: number) => {
       if (turn > 0.5) throw new Error("context lost");
     } };
-    await expect(encodeSpin(failing, VP9, () => {})).rejects.toThrow("context lost");
+    await expect(encodeSpin(failing, VP9, () => {}, new AbortController().signal)).rejects.toThrow("context lost");
     expect(encoders[0]?.state).toBe("closed");
     expect(cancel).toHaveBeenCalled();
+  });
+
+  it("keeps exactly four frames queued in the encoder at most", async () => {
+    await encodeSpin(stage().stage, VP9, () => {}, new AbortController().signal);
+    expect(encoders[0]?.deepestQueue).toBe(4);
+    expect(encoders[0]?.encoded).toHaveLength(240);
+  });
+
+  it("stops rendering and encoding when aborted mid-run, closes the encoder and output, and produces no video", async () => {
+    const controller = new AbortController();
+    const cancel = vi.spyOn(Output.prototype, "cancel");
+    const turns: number[] = [];
+    const aborting = {
+      canvas: document.createElement("canvas"),
+      renderFrame: (turn: number) => {
+        turns.push(turn);
+        if (turns.length === 100) controller.abort();
+      },
+    };
+    const video = await encodeSpin(aborting, VP9, () => {}, controller.signal);
+    expect(video).toBeNull();
+    expect(turns).toHaveLength(100);
+    expect(encoders[0]?.encoded.length).toBeLessThanOrEqual(100);
+    expect(encoders[0]?.state).toBe("closed");
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("stops while waiting on a full encoder queue when aborted", async () => {
+    const controller = new AbortController();
+    const { turns, stage: s } = stage();
+    const video = encodeSpin(s, VP9, () => {}, controller.signal);
+    await vi.waitFor(() => expect(encoders[0]?.encodeQueueSize).toBe(4));
+    controller.abort();
+    expect(await video).toBeNull();
+    const rendered = turns.length;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(turns).toHaveLength(rendered);
+    expect(rendered).toBeLessThan(240);
+    expect(encoders[0]?.state).toBe("closed");
+  });
+
+  it("renders nothing when already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { turns, stage: s } = stage();
+    expect(await encodeSpin(s, VP9, () => {}, controller.signal)).toBeNull();
+    expect(turns).toEqual([]);
   });
 });
