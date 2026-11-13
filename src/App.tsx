@@ -8,7 +8,7 @@ import { buildIcon, ERROR_NOT_SVG, type IconGeometry } from "./svgIcon";
 import { exportGlb } from "./glb";
 import { createPngRenderer } from "./renderPng";
 import { renderSpin } from "./renderSpin";
-import { canRecordVideo, spinBackground } from "./spin";
+import { findSpinCodec, spinBackground, type SpinCodec } from "./spin";
 import { hasWebGL2, iconGeometry, Viewport, type Toast } from "./Viewport";
 
 const CUSTOM_ID = "custom";
@@ -57,9 +57,9 @@ function ExportButton({ kind, exporting, disabled = false, helper = false, onCli
   );
 }
 
-function spinHelper(look: Look, recordingSeconds: number | undefined): string {
+function spinHelper(look: Look, recordingSeconds: number | undefined, codec: SpinCodec | null | undefined): string {
   if (recordingSeconds !== undefined) return `Recording spin… ${recordingSeconds}s`;
-  if (!canRecordVideo()) return NO_VIDEO;
+  if (codec === null) return NO_VIDEO;
   const { fallback } = spinBackground(look);
   return fallback
     ? `8-second loop, WebM. Background is transparent, so the video uses the ${fallback} background.`
@@ -117,7 +117,16 @@ export function App() {
   const [exporting, setExporting] = useState<Exporting | null>(null);
   const [status, setStatus] = useState<{ text: string; icon: Icon; files: SetItem[] } | null>(null);
   const nothingSelected = useLook(({ export: { sizes, scales } }) => sizes.length === 0 || scales.length === 0);
-  const spinText = useLook((look) => spinHelper(look, exporting?.seconds));
+  const [spinCodec, setSpinCodec] = useState<SpinCodec | null | undefined>(undefined);
+  const spinText = useLook((look) => spinHelper(look, exporting?.seconds, spinCodec));
+
+  useEffect(() => {
+    let mounted = true;
+    void findSpinCodec().then((codec) => mounted && setSpinCodec(codec));
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const showToast = (message: string | undefined) => {
     toastCount.current += 1;
@@ -265,9 +274,10 @@ export function App() {
 
   const exportSpin = () =>
     runExport("spin", async ({ update }) => {
+      if (!spinCodec) return;
       update({ seconds: 0 });
       const look = getLook();
-      const video = await renderSpin(icon.geometry, look, spinBackground(look).hex, (seconds) => update({ seconds }));
+      const video = await renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }));
       download(video, "icon-spin.webm");
     });
 
@@ -421,7 +431,7 @@ export function App() {
               Cancel
             </button>
           )}
-          <ExportButton kind="spin" exporting={exporting} disabled={!hasWebGL2 || !canRecordVideo()} helper onClick={exportSpin}>
+          <ExportButton kind="spin" exporting={exporting} disabled={!hasWebGL2 || !spinCodec} helper onClick={exportSpin}>
             Export spin
           </ExportButton>
           <p id="export-spin-helper" className="helper" aria-live="polite">

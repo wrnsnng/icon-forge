@@ -2,11 +2,11 @@ import { createRoot, type RootState } from "@react-three/fiber";
 import { Color } from "three";
 import type { Look } from "./look";
 import { FailOnError, Ready } from "./renderPng";
-import { recordSpin, SPIN_SECONDS, SPIN_SIZE } from "./spin";
+import { encodeSpin, SPIN_SECONDS, SPIN_SIZE, type SpinCodec } from "./spin";
 import type { IconGeometry } from "./svgIcon";
 import { CAMERA_FOV, cameraPosition, loadStudioEnvironment, LookScene, TURNTABLE } from "./Viewport";
 
-export async function renderSpin(icon: IconGeometry, look: Look, background: string, onSecond: (seconds: number) => void): Promise<Blob> {
+export async function renderSpin(icon: IconGeometry, look: Look, background: string, codec: SpinCodec, onSecond: (seconds: number) => void): Promise<Blob> {
   const canvas = document.createElement("canvas");
   const root = createRoot(canvas);
   const environment = loadStudioEnvironment();
@@ -32,7 +32,7 @@ export async function renderSpin(icon: IconGeometry, look: Look, background: str
     if (!turntable) throw new Error("The offscreen icon didn't mount");
     state.scene.background = new Color(background);
     state.advance(0);
-    return await recordSpin(
+    return await encodeSpin(
       {
         canvas,
         renderFrame: (turn) => {
@@ -40,6 +40,7 @@ export async function renderSpin(icon: IconGeometry, look: Look, background: str
           state.advance(turn * SPIN_SECONDS);
         },
       },
+      codec,
       onSecond,
     );
   } finally {

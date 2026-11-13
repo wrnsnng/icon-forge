@@ -1,106 +1,189 @@
+// @vitest-environment jsdom
+import { BufferSource, EncodedPacketSink, Input, Output, WEBM } from "mediabunny";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recordSpin } from "./spin";
+import { encodeSpin, findSpinCodec, type SpinCodec } from "./spin";
 
-let log: string[];
-let recordedAt: { start: number; stop: number };
-let track: { stop: ReturnType<typeof vi.fn>; requestFrame: ReturnType<typeof vi.fn> };
+type Encoded = { timestamp: number; duration: number | null; keyFrame: boolean };
 
-class FakeRecorder {
-  static failToConstruct = false;
-  state: "inactive" | "recording" = "inactive";
-  ondataavailable: ((event: { data: Blob }) => void) | null = null;
-  onstop: (() => void) | null = null;
-  constructor() {
-    if (FakeRecorder.failToConstruct) throw new Error("NotSupportedError");
-  }
-  static isTypeSupported = (type: string) => type.startsWith("video/webm");
-  start() {
-    this.state = "recording";
-    recordedAt.start = performance.now();
-    log.push("start");
-  }
-  stop() {
-    this.state = "inactive";
-    recordedAt.stop = performance.now();
-    log.push("stop");
-    this.ondataavailable?.({ data: new Blob(["webm"]) });
-    this.onstop?.();
+class FakeChunk {
+  readonly byteLength = 4;
+  constructor(
+    readonly type: "key" | "delta",
+    readonly timestamp: number,
+    readonly duration: number | null,
+  ) {}
+  copyTo(target: Uint8Array) {
+    target.set([1, 2, 3, 4]);
   }
 }
 
+class FakeFrame {
+  readonly timestamp: number;
+  readonly duration: number | null;
+  closed = false;
+  constructor(_source: unknown, init: { timestamp: number; duration?: number }) {
+    this.timestamp = init.timestamp;
+    this.duration = init.duration ?? null;
+  }
+  close() {
+    this.closed = true;
+  }
+}
+
+let supported: string[];
+let encoders: FakeEncoder[];
+let failOnFrame: number | null;
+
+class FakeEncoder {
+  static isConfigSupported = async (config: VideoEncoderConfig) => ({ supported: supported.includes(config.codec), config });
+  state: "unconfigured" | "configured" | "closed" = "unconfigured";
+  encodeQueueSize = 0;
+  config: VideoEncoderConfig | null = null;
+  encoded: Encoded[] = [];
+  frames: FakeFrame[] = [];
+  private held: FakeChunk[] = [];
+  constructor(private readonly init: VideoEncoderInit) {
+    encoders.push(this);
+  }
+  configure(config: VideoEncoderConfig) {
+    this.config = config;
+    this.state = "configured";
+  }
+  encode(frame: FakeFrame, options?: VideoEncoderEncodeOptions) {
+    if (failOnFrame === this.encoded.length) {
+      this.init.error(new DOMException("encoder crashed", "EncodingError"));
+      return;
+    }
+    const keyFrame = options?.keyFrame ?? false;
+    this.frames.push(frame);
+    this.encoded.push({ timestamp: frame.timestamp, duration: frame.duration, keyFrame });
+    this.held.push(new FakeChunk(keyFrame ? "key" : "delta", frame.timestamp, frame.duration));
+  }
+  async flush() {
+    if (this.state !== "configured") throw new DOMException("not configured", "InvalidStateError");
+    this.held.forEach((chunk, i) =>
+      this.init.output(chunk as unknown as EncodedVideoChunk, i === 0 ? { decoderConfig: { codec: this.config?.codec ?? "", codedWidth: 1080, codedHeight: 1080 } } : undefined),
+    );
+    this.held = [];
+  }
+  close() {
+    this.state = "closed";
+  }
+  addEventListener() {}
+}
+
+const VP9: SpinCodec = { codec: "vp9", config: { codec: "vp09.00.10.08", width: 1080, height: 1080, framerate: 30 } };
+
 function stage() {
-  const canvas = {
-    captureStream: () => ({ getTracks: () => [track], getVideoTracks: () => [track] }),
-  } as unknown as HTMLCanvasElement;
-  return { canvas, renderFrame: (turn: number) => log.push(`render ${turn}`) };
+  const turns: number[] = [];
+  return { turns, stage: { canvas: document.createElement("canvas"), renderFrame: (turn: number) => turns.push(turn) } };
+}
+
+async function packetsOf(video: Blob) {
+  const bytes = await new Promise<ArrayBuffer>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as ArrayBuffer);
+    reader.readAsArrayBuffer(video);
+  });
+  const input = new Input({ source: new BufferSource(bytes), formats: [WEBM] });
+  const track = await input.getPrimaryVideoTrack();
+  if (!track) throw new Error("No video track in the WebM");
+  const packets = [];
+  const sink = new EncodedPacketSink(track);
+  for await (const packet of sink.packets()) packets.push(packet);
+  return { codec: track.codec, packets, duration: await track.computeDuration() };
 }
 
 beforeEach(() => {
-  log = [];
-  recordedAt = { start: NaN, stop: NaN };
-  track = { stop: vi.fn(() => log.push("track stopped")), requestFrame: vi.fn(() => log.push("capture")) };
-  FakeRecorder.failToConstruct = false;
-  vi.stubGlobal("MediaRecorder", FakeRecorder);
-  vi.useFakeTimers();
+  supported = ["vp09.00.10.08", "vp8"];
+  encoders = [];
+  failOnFrame = null;
+  vi.stubGlobal("VideoEncoder", FakeEncoder);
+  vi.stubGlobal("VideoFrame", FakeFrame);
+  vi.stubGlobal("EncodedVideoChunk", FakeChunk);
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
-describe("recordSpin", () => {
-  const recordedTurns = () =>
-    log
-      .slice(log.indexOf("start") + 1, log.indexOf("stop"))
-      .filter((entry) => entry.startsWith("render"))
-      .map((entry) => Number(entry.split(" ")[1]));
-
-  async function recordWith(renderMs: (frame: number) => number) {
-    let frame = 0;
-    const slow = {
-      ...stage(),
-      renderFrame: (turn: number) => {
-        log.push(`render ${turn}`);
-        vi.advanceTimersByTime(renderMs(frame++));
-      },
-    };
-    const recording = recordSpin(slow, () => {});
-    await vi.runAllTimersAsync();
-    await recording;
-    return { seconds: (recordedAt.stop - recordedAt.start) / 1000, turns: recordedTurns() };
-  }
-
-  it.each([
-    ["fast renders", () => 1],
-    ["slow renders of 100 ms", () => 100],
-    ["uneven renders between 1 ms and 250 ms", (frame: number) => (frame % 7 === 0 ? 250 : 1)],
-  ])("records one full turn in 8 s ± 0.2 s with %s", async (_, renderMs) => {
-    const { seconds, turns } = await recordWith(renderMs);
-    expect(seconds).toBeGreaterThanOrEqual(7.8);
-    expect(seconds).toBeLessThanOrEqual(8.2);
-    expect(turns[0]).toBe(0);
-    expect(turns.at(-1)).toBe(1);
-    turns.slice(1).forEach((turn, i) => expect(turn).toBeGreaterThan(turns[i] ?? 1));
+describe("findSpinCodec", () => {
+  it("prefers VP9 at 1080 x 1080", async () => {
+    expect(await findSpinCodec()).toMatchObject({ codec: "vp9", config: { width: 1080, height: 1080 } });
   });
 
-  it("ends on the full turn even when a slow render overshoots 8 s", async () => {
-    const { turns } = await recordWith((frame) => (frame === 3 ? 7990 : 1));
-    expect(turns.at(-1)).toBe(1);
-    expect(turns.filter((turn) => turn > 1)).toEqual([]);
+  it("falls back to VP8 when VP9 isn't supported", async () => {
+    supported = ["vp8"];
+    expect(await findSpinCodec()).toMatchObject({ codec: "vp8", config: { codec: "vp8", width: 1080, height: 1080 } });
   });
 
-  it("stops the capture stream when the recorder can't be constructed", async () => {
-    FakeRecorder.failToConstruct = true;
-    await expect(recordSpin(stage(), () => {})).rejects.toThrow("NotSupportedError");
-    expect(track.stop).toHaveBeenCalled();
+  it("finds nothing when neither codec is supported", async () => {
+    supported = [];
+    expect(await findSpinCodec()).toBeNull();
   });
 
-  it("stops the capture stream when rendering a frame fails", async () => {
-    const failing = { ...stage(), renderFrame: () => {
-      throw new Error("context lost");
+  it("finds nothing when the browser has no VideoEncoder", async () => {
+    vi.stubGlobal("VideoEncoder", undefined);
+    expect(await findSpinCodec()).toBeNull();
+  });
+});
+
+describe("encodeSpin", () => {
+  it("renders exactly 240 orientations, one per 1/240 of a turn, with no 241st", async () => {
+    const { turns, stage: s } = stage();
+    await encodeSpin(s, VP9, () => {});
+    expect(turns).toEqual(Array.from({ length: 240 }, (_, i) => i / 240));
+  });
+
+  it("timestamps frame i at i/30 s from the frame index, keyframes only frame 0, and closes every frame", async () => {
+    await encodeSpin(stage().stage, VP9, () => {});
+    const [encoder] = encoders;
+    expect(encoder?.config).toMatchObject({ codec: "vp09.00.10.08", width: 1080, height: 1080 });
+    expect(encoder?.encoded).toEqual(Array.from({ length: 240 }, (_, i) => ({ timestamp: (i * 1e6) / 30, duration: 1e6 / 30, keyFrame: i === 0 })));
+    expect(encoder?.frames.every((frame) => frame.closed)).toBe(true);
+    expect(encoder?.state).toBe("closed");
+  });
+
+  it("writes a VP9 WebM of exactly 240 packets and 8.000 s, starting on a keyframe", async () => {
+    const { codec, packets, duration } = await packetsOf(await encodeSpin(stage().stage, VP9, () => {}));
+    expect(codec).toBe("vp9");
+    expect(packets).toHaveLength(240);
+    expect(packets[0]?.type).toBe("key");
+    expect(packets.slice(1).every((packet) => packet.type === "delta")).toBe(true);
+    expect(packets.map((packet) => Math.round(packet.timestamp * 30))).toEqual(Array.from({ length: 240 }, (_, i) => i));
+    expect(duration).toBeCloseTo(8, 3);
+  });
+
+  it("writes VP8 when that is the chosen codec", async () => {
+    supported = ["vp8"];
+    const codec = await findSpinCodec();
+    if (!codec) throw new Error("VP8 should be chosen");
+    expect((await packetsOf(await encodeSpin(stage().stage, codec, () => {}))).codec).toBe("vp8");
+  });
+
+  it("reports whole seconds of video encoded, up to 8", async () => {
+    const seconds: number[] = [];
+    await encodeSpin(stage().stage, VP9, (s) => seconds.push(s));
+    expect(seconds.at(-1)).toBe(8);
+    expect([...new Set(seconds)]).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("closes the encoder and cancels the output when encoding fails", async () => {
+    failOnFrame = 100;
+    const cancel = vi.spyOn(Output.prototype, "cancel");
+    await expect(encodeSpin(stage().stage, VP9, () => {})).rejects.toThrow("encoder crashed");
+    expect(encoders[0]?.state).toBe("closed");
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("closes the encoder and cancels the output when a frame fails to render", async () => {
+    const cancel = vi.spyOn(Output.prototype, "cancel");
+    const failing = { ...stage().stage, renderFrame: (turn: number) => {
+      if (turn > 0.5) throw new Error("context lost");
     } };
-    await expect(recordSpin(failing, () => {})).rejects.toThrow("context lost");
-    expect(track.stop).toHaveBeenCalled();
+    await expect(encodeSpin(failing, VP9, () => {})).rejects.toThrow("context lost");
+    expect(encoders[0]?.state).toBe("closed");
+    expect(cancel).toHaveBeenCalled();
   });
 });

@@ -1,12 +1,28 @@
+import { BufferTarget, EncodedPacket, EncodedVideoPacketSource, Output, WebMOutputFormat } from "mediabunny";
 import { PRESETS } from "./presets";
 import type { Look } from "./look";
 
 export const SPIN_SECONDS = 8;
 export const SPIN_FPS = 30;
 export const SPIN_SIZE = 1080;
-const MIME_TYPES = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+const SPIN_FRAMES = SPIN_SECONDS * SPIN_FPS;
+const MAX_QUEUED_FRAMES = 4;
 
-export const canRecordVideo = () => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported("video/webm");
+export type SpinCodec = { codec: "vp9" | "vp8"; config: VideoEncoderConfig };
+
+const CANDIDATES: SpinCodec[] = [
+  { codec: "vp9", config: { codec: "vp09.00.10.08", width: SPIN_SIZE, height: SPIN_SIZE, framerate: SPIN_FPS, bitrate: 12_000_000 } },
+  { codec: "vp8", config: { codec: "vp8", width: SPIN_SIZE, height: SPIN_SIZE, framerate: SPIN_FPS, bitrate: 12_000_000 } },
+];
+
+export async function findSpinCodec(): Promise<SpinCodec | null> {
+  if (typeof VideoEncoder === "undefined") return null;
+  for (const candidate of CANDIDATES) {
+    const { supported } = await VideoEncoder.isConfigSupported(candidate.config).catch(() => ({ supported: false }));
+    if (supported) return candidate;
+  }
+  return null;
+}
 
 export function spinBackground(look: Look): { hex: string; fallback: string | null } {
   if (look.camera.background !== "transparent") return { hex: look.camera.background, fallback: null };
@@ -20,44 +36,51 @@ export type SpinStage = {
   renderFrame: (turn: number) => void;
 };
 
-const sleepUntil = (time: number) => new Promise((resolve) => setTimeout(resolve, Math.max(0, time - performance.now())));
-
-export async function recordSpin({ canvas, renderFrame }: SpinStage, onSecond: (seconds: number) => void): Promise<Blob> {
-  const stream = canvas.captureStream(SPIN_FPS);
+export async function encodeSpin({ canvas, renderFrame }: SpinStage, { codec, config }: SpinCodec, onSecond: (seconds: number) => void): Promise<Blob> {
+  const target = new BufferTarget();
+  const output = new Output({ format: new WebMOutputFormat(), target });
+  const source = new EncodedVideoPacketSource(codec);
+  output.addVideoTrack(source, { frameRate: SPIN_FPS });
+  let failure: unknown = null;
+  let written = Promise.resolve();
+  let packets = 0;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      const packet = EncodedPacket.fromEncodedChunk(chunk);
+      const first = packets === 0;
+      packets += 1;
+      onSecond(Math.floor(packets / SPIN_FPS));
+      written = written.then(() => source.add(packet, first ? meta : undefined));
+      written.catch((error: unknown) => (failure ??= error));
+    },
+    error: (error) => (failure ??= error),
+  });
+  const check = () => {
+    if (failure) throw failure;
+  };
   try {
-    const [track] = stream.getVideoTracks() as CanvasCaptureMediaStreamTrack[];
-    if (!track) throw new Error("The canvas gave no video track");
-    const mimeType = MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (event) => chunks.push(event.data);
-    const stopped = new Promise((resolve) => (recorder.onstop = resolve));
-    const durationMs = SPIN_SECONDS * 1000;
-    const frameMs = 1000 / SPIN_FPS;
-    recorder.start();
-    const start = performance.now();
-    try {
-      let renderMs = 0;
-      const show = (turn: number) => {
-        const before = performance.now();
-        renderFrame(turn);
-        track.requestFrame();
-        renderMs = performance.now() - before;
-      };
-      for (let elapsed = 0; elapsed + renderMs < durationMs; elapsed = performance.now() - start) {
-        onSecond(Math.floor(elapsed / 1000));
-        show(elapsed / durationMs);
-        await sleepUntil(start + Math.min((Math.floor(elapsed / frameMs) + 1) * frameMs, durationMs - renderMs));
+    await output.start();
+    encoder.configure(config);
+    for (let frame = 0; frame < SPIN_FRAMES; frame += 1) {
+      check();
+      renderFrame(frame / SPIN_FRAMES);
+      const videoFrame = new VideoFrame(canvas, { timestamp: (frame * 1e6) / SPIN_FPS, duration: 1e6 / SPIN_FPS });
+      try {
+        encoder.encode(videoFrame, { keyFrame: frame === 0 });
+      } finally {
+        videoFrame.close();
       }
-      await sleepUntil(start + durationMs - renderMs);
-      show(1);
-      await sleepUntil(performance.now() + frameMs);
-    } finally {
-      recorder.stop();
+      if (encoder.encodeQueueSize > MAX_QUEUED_FRAMES) await new Promise((resolve) => encoder.addEventListener("dequeue", resolve, { once: true }));
     }
-    await stopped;
-    return new Blob(chunks, { type: "video/webm" });
+    check();
+    await encoder.flush();
+    await written;
+    check();
+    await output.finalize();
+    if (!target.buffer) throw new Error("The WebM muxer produced no data");
+    return new Blob([target.buffer], { type: "video/webm" });
   } finally {
-    stream.getTracks().forEach((track) => track.stop());
+    if (encoder.state !== "closed") encoder.close();
+    if (output.state !== "finalized" && output.state !== "canceled") await output.cancel();
   }
 }

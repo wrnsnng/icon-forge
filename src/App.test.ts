@@ -32,6 +32,19 @@ vi.mock("./renderSpin", () => ({
     }),
 }));
 
+const stubVideoEncoder = (codecs: string[] | null) =>
+  vi.stubGlobal(
+    "VideoEncoder",
+    codecs === null
+      ? undefined
+      : { isConfigSupported: async (config: VideoEncoderConfig) => ({ supported: codecs.includes(config.codec) && config.width === 1080 && config.height === 1080 }) },
+  );
+const remount = async () => {
+  act(() => root.unmount());
+  mount();
+  await act(async () => vi.advanceTimersByTimeAsync(0));
+};
+
 let reducedMotion = false;
 
 const INVALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0'";
@@ -547,18 +560,25 @@ describe("Export section", () => {
     expect(getLook()).toEqual(OTHER_LOOK);
   });
 
-  it("disables Export spin when the browser can't record WebM", () => {
-    act(() => root.unmount());
-    vi.stubGlobal("MediaRecorder", { isTypeSupported: () => false });
-    mount();
+  it.each([
+    ["has no VideoEncoder", null],
+    ["supports neither VP9 nor VP8 at 1080 x 1080", ["avc1.42001f"]],
+  ])("disables Export spin when the browser %s", async (_, codecs) => {
+    stubVideoEncoder(codecs);
+    await remount();
     expect(button("Export spin")?.disabled).toBe(true);
     expect(helperFor("Export spin")).toBe("This browser can't record video. Try Chrome or Firefox.");
   });
 
-  it("enables Export spin and names the fallback background when Background is transparent", () => {
-    act(() => root.unmount());
-    vi.stubGlobal("MediaRecorder", { isTypeSupported: (type: string) => type.startsWith("video/webm") });
-    mount();
+  it.each([["VP9", ["vp09.00.10.08"]], ["only VP8", ["vp8"]]])("enables Export spin when the browser supports %s", async (_, codecs) => {
+    stubVideoEncoder(codecs);
+    await remount();
+    expect(button("Export spin")?.disabled).toBe(false);
+  });
+
+  it("names the fallback background when Background is transparent", async () => {
+    stubVideoEncoder(["vp09.00.10.08"]);
+    await remount();
     expect(button("Export spin")?.disabled).toBe(false);
     expect(helperFor("Export spin")).toBe("8-second loop, WebM. Uses the background colour.");
     act(() => setLook({ ...DEFAULT_LOOK, preset: "zest-dark", camera: { ...DEFAULT_LOOK.camera, background: "transparent" } }));
@@ -582,16 +602,15 @@ describe("Export lock", () => {
   const disabledControls = () => EXPORT_CONTROLS.map((name) => control(name)?.disabled);
   const downloads: string[] = [];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     downloads.length = 0;
     spinResult = null;
-    act(() => root.unmount());
-    vi.stubGlobal("MediaRecorder", { isTypeSupported: (type: string) => type.startsWith("video/webm") });
+    stubVideoEncoder(["vp09.00.10.08"]);
     vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: () => "blob:x", revokeObjectURL: () => {} }));
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
       downloads.push(this.download);
     });
-    mount();
+    await remount();
   });
 
   it("disables every export while a spin records, then releases them all when it finishes", async () => {
