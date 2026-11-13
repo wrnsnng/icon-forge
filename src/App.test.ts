@@ -3,11 +3,12 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { DEFAULT_LOOK, getLook, setLook } from "./look";
+import { DEFAULT_LOOK, getLook, setLook, type Look } from "./look";
 import { ERROR_NOT_SVG } from "./svgIcon";
 import type { Toast } from "./Viewport";
 
 vi.mock("./Viewport", () => ({
+  hasWebGL2: true,
   Viewport: ({ toast }: { toast: Toast | null }) =>
     toast ? createElement("div", { key: toast.id, role: "alert" }, toast.message) : null,
 }));
@@ -21,6 +22,14 @@ vi.mock("./renderPng", () => ({
     },
     dispose: () => {},
   }),
+}));
+
+let spinResult: { resolve: (video: Blob) => void; reject: (error: Error) => void } | null = null;
+vi.mock("./renderSpin", () => ({
+  renderSpin: () =>
+    new Promise<Blob>((resolve, reject) => {
+      spinResult = { resolve, reject };
+    }),
 }));
 
 let reducedMotion = false;
@@ -52,6 +61,13 @@ function mount() {
 beforeEach(() => {
   reducedMotion = false;
   setLook(DEFAULT_LOOK);
+  Blob.prototype.text ??= function (this: Blob) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.readAsText(this);
+    });
+  };
   HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) {
     this.open = true;
   };
@@ -415,3 +431,200 @@ describe("Export", () => {
     });
   });
 });
+
+describe("Export section", () => {
+  const BAD_LOOK = "That look file couldn't be read. Nothing was changed.";
+  const button = (label: string) =>
+    [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent?.trim() === label) ?? null;
+  const helperFor = (label: string) => {
+    const id = button(label)?.getAttribute("aria-describedby");
+    return id ? (container.querySelector(`#${id}`)?.textContent ?? null) : null;
+  };
+  const lookInput = () => container.querySelector<HTMLInputElement>("input[type=file][accept*=json]");
+  const pickLook = async (file: File) => {
+    const input = lookInput();
+    if (!input) throw new Error("No look file input");
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  };
+  const drop = async (file: File) => {
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"], files: [file] } });
+    await act(async () => {
+      window.dispatchEvent(event);
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  };
+  const lookFile = (look: unknown, name = "zest-light.look.json") => new File([JSON.stringify(look)], name, { type: "application/json" });
+  const OTHER_LOOK: Look = {
+    iconForgeLook: 1,
+    preset: "custom",
+    shape: { scaleX: 120, scaleY: 80, depth: 250, bevel: 70, bulge: 40 },
+    material: { type: "clay", color: "#123456", roughness: 0.6, density: 0.9, ior: 2.1, dispersion: 0.7 },
+    accent: "#abcdef",
+    lights: { rotation: 200, exposure: 2.5 },
+    camera: { background: "transparent", zoom: 160, glow: 0.8, dof: 0.4, focus: 0.9, azimuth: -45, elevation: 30 },
+    export: { sizes: [24], scales: [2] },
+  };
+
+  it("saves the current look as {preset}.look.json and restores every value from it", async () => {
+    const downloads: { name: string; blob: Blob }[] = [];
+    let pending: Blob | null = null;
+    vi.stubGlobal("URL", { ...URL, createObjectURL: (blob: Blob) => ((pending = blob), "blob:look"), revokeObjectURL: () => {} });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      if (pending) downloads.push({ name: this.download, blob: pending });
+    });
+
+    act(() => button("Save look")?.click());
+    expect(downloads.map((d) => d.name)).toEqual(["zest-light.look.json"]);
+    const saved = downloads[0]?.blob;
+    if (!saved) throw new Error("Nothing downloaded");
+
+    act(() => setLook(OTHER_LOOK));
+    expect(valueText("Exposure")).toBe("2.50");
+
+    await pickLook(new File([saved], "zest-light.look.json"));
+    expect(getLook()).toEqual(DEFAULT_LOOK);
+    expect(valueText("Exposure")).toBe("1.00");
+    expect(radio("material", "Glass")?.checked).toBe(true);
+  });
+
+  it("names a saved custom look custom.look.json", () => {
+    const names: string[] = [];
+    vi.stubGlobal("URL", { ...URL, createObjectURL: () => "blob:look", revokeObjectURL: () => {} });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    act(() => setLook(OTHER_LOOK));
+    act(() => button("Save look")?.click());
+    expect(names).toEqual(["custom.look.json"]);
+  });
+
+  it("rejects a look whose ior is a string and changes nothing", async () => {
+    act(() => setLook(OTHER_LOOK));
+    const before = getLook();
+    await pickLook(lookFile({ ...DEFAULT_LOOK, material: { ...DEFAULT_LOOK.material, ior: "high" } }));
+    expect(alertText()).toBe(BAD_LOOK);
+    expect(getLook()).toBe(before);
+    expect(valueText("Exposure")).toBe("2.50");
+  });
+
+  const unreadable = (name: string) => {
+    const file = new File(["{}"], name);
+    Object.defineProperty(file, "text", { value: () => Promise.reject(new DOMException("Permission revoked", "NotReadableError")) });
+    return file;
+  };
+
+  it("shows the bad-look error and changes nothing when a picked look file can't be read", async () => {
+    act(() => setLook(OTHER_LOOK));
+    const before = getLook();
+    await pickLook(unreadable("mine.look.json"));
+    expect(alertText()).toBe(BAD_LOOK);
+    expect(getLook()).toBe(before);
+  });
+
+  it("shows the bad-look error when a dropped look file can't be read, and the not-SVG error for an unreadable SVG", async () => {
+    const before = getLook();
+    await drop(unreadable("mine.look.json"));
+    expect(alertText()).toBe(BAD_LOOK);
+    expect(getLook()).toBe(before);
+
+    await drop(unreadable("icon.svg"));
+    expect(alertText()).toBe(ERROR_NOT_SVG);
+    expect(iconSelect()?.value).not.toBe("custom");
+  });
+
+  it("treats a dropped .json as a look and a dropped .svg as an icon", async () => {
+    await drop(lookFile(OTHER_LOOK, "mine.look.json"));
+    expect(getLook()).toEqual(OTHER_LOOK);
+    expect(iconSelect()?.value).not.toBe("custom");
+
+    await drop(new File([VALID_SVG], "icon.svg", { type: "image/svg+xml" }));
+    expect(iconSelect()?.value).toBe("custom");
+    expect(getLook()).toEqual(OTHER_LOOK);
+  });
+
+  it("disables Export spin when the browser can't record WebM", () => {
+    act(() => root.unmount());
+    vi.stubGlobal("MediaRecorder", { isTypeSupported: () => false });
+    mount();
+    expect(button("Export spin")?.disabled).toBe(true);
+    expect(helperFor("Export spin")).toBe("This browser can't record video. Try Chrome or Firefox.");
+  });
+
+  it("enables Export spin and names the fallback background when Background is transparent", () => {
+    act(() => root.unmount());
+    vi.stubGlobal("MediaRecorder", { isTypeSupported: (type: string) => type.startsWith("video/webm") });
+    mount();
+    expect(button("Export spin")?.disabled).toBe(false);
+    expect(helperFor("Export spin")).toBe("8-second loop, WebM. Uses the background colour.");
+    act(() => setLook({ ...DEFAULT_LOOK, preset: "zest-dark", camera: { ...DEFAULT_LOOK.camera, background: "transparent" } }));
+    expect(helperFor("Export spin")).toBe("8-second loop, WebM. Background is transparent, so the video uses the Zest dark background.");
+  });
+
+  it("says dispersion is left out of a glass GLB only", () => {
+    expect(helperFor("Export GLB")).toBe("Mesh and material only. Lighting and dispersion aren't included.");
+    act(() => radio("material", "Clay")?.click());
+    expect(helperFor("Export GLB")).toBe("Mesh and material only. Lighting isn't included.");
+  });
+});
+
+describe("Export lock", () => {
+  const EXPORT_CONTROLS = ["Export PNG", /^Export (Zest |Selekt-2 )?set/, "Export spin", "Export GLB", "Save look", "Load look"];
+  const control = (name: string | RegExp) =>
+    [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => {
+      const text = button.textContent?.trim() ?? "";
+      return typeof name === "string" ? text === name : name.test(text);
+    });
+  const disabledControls = () => EXPORT_CONTROLS.map((name) => control(name)?.disabled);
+  const downloads: string[] = [];
+
+  beforeEach(() => {
+    downloads.length = 0;
+    spinResult = null;
+    act(() => root.unmount());
+    vi.stubGlobal("MediaRecorder", { isTypeSupported: (type: string) => type.startsWith("video/webm") });
+    vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: () => "blob:x", revokeObjectURL: () => {} }));
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      downloads.push(this.download);
+    });
+    mount();
+  });
+
+  it("disables every export while a spin records, then releases them all when it finishes", async () => {
+    expect(disabledControls()).toEqual([false, false, false, false, false, false]);
+    act(() => control("Export spin")?.click());
+    expect(disabledControls()).toEqual([true, true, true, true, true, true]);
+    expect(control("Export spin")?.getAttribute("aria-busy")).toBe("true");
+
+    await act(async () => spinResult?.resolve(new Blob(["webm"])));
+    expect(downloads).toEqual(["icon-spin.webm"]);
+    expect(disabledControls()).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("releases every export and shows the export error when a spin fails", async () => {
+    act(() => control("Export spin")?.click());
+    await act(async () => spinResult?.reject(new Error("encoder died")));
+    expect(alertText()).toBe("Export failed. Try again.");
+    expect(downloads).toEqual([]);
+    expect(disabledControls()).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("disables the spin, GLB and look controls while a PNG set renders, and releases them on cancel", async () => {
+    let finish = () => {};
+    renderGate = new Promise((resolve) => (finish = resolve));
+    act(() => control(/^Export (Zest |Selekt-2 )?set/)?.click());
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(disabledControls()).toEqual([true, true, true, true, true, true]);
+
+    act(() => control("Cancel")?.click());
+    finish();
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(disabledControls()).toEqual([false, false, false, false, false, false]);
+    renderGate = Promise.resolve();
+  });
+});
+

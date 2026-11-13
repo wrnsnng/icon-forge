@@ -8,6 +8,7 @@ import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometr
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { TessellateModifier } from "three/addons/modifiers/TessellateModifier.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { attenuationDistance, GLASS_THICKNESS } from "./glb";
 import { getLook, updateLook, useLook, type Look } from "./look";
 import type { IconGeometry } from "./svgIcon";
 
@@ -34,6 +35,7 @@ const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const VIEWPORT_LABEL = "3D preview, use arrow keys to orbit";
 export const HDRI = "/hdri/studio_small_09_1k.hdr";
+export const TURNTABLE = "turntable";
 
 export async function loadStudioEnvironment(): Promise<Texture> {
   const texture = await new HDRLoader().loadAsync(HDRI);
@@ -43,7 +45,7 @@ export async function loadStudioEnvironment(): Promise<Texture> {
 
 extend({ Group, Mesh, MeshPhysicalMaterial });
 
-const hasWebGL2 = (() => {
+export const hasWebGL2 = (() => {
   const gl = document.createElement("canvas").getContext("webgl2");
   gl?.getExtension("WEBGL_lose_context")?.loseContext();
   return gl !== null;
@@ -170,6 +172,15 @@ export function bulgedGeometry({ caps, sides, lift }: Cushion, bulge: number): B
   return merged;
 }
 
+export function iconGeometry(icon: IconGeometry, { depth, bevel, bulge }: Look["shape"]): BufferGeometry {
+  if (bulge === 0) return flatGeometry(icon, { depth, bevel });
+  const base = cushion(icon, { depth, bevel });
+  const geometry = bulgedGeometry(base, bulge);
+  base.caps.dispose();
+  base.sides.dispose();
+  return geometry;
+}
+
 function IconMaterial({ look }: { look: Look }) {
   const { material, accent } = look;
   const emissive = { emissive: accent, emissiveIntensity: look.camera.glow * GLOW_TINT };
@@ -183,8 +194,8 @@ function IconMaterial({ look }: { look: Look }) {
       ior={material.ior}
       chromaticAberration={material.dispersion}
       attenuationColor={material.color}
-      attenuationDistance={1 / (1 + 50 * material.density)}
-      thickness={0.2}
+      attenuationDistance={attenuationDistance(material.density)}
+      thickness={GLASS_THICKNESS}
       {...emissive}
     />
   );
@@ -211,7 +222,7 @@ function Icon({ icon, look, spin }: { icon: IconGeometry; look: Look; spin: bool
   });
 
   return (
-    <group ref={turntable}>
+    <group ref={turntable} name={TURNTABLE}>
       <mesh geometry={geometry} scale={[scaleX / 100, scaleY / 100, 1]}>
         <IconMaterial look={look} />
       </mesh>
@@ -252,6 +263,8 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
   const controls = useRef<OrbitControlsImpl>(null);
   const camera = useThree((state) => state.camera);
   const zoom = useLook((look) => look.camera.zoom);
+  const azimuth = useLook((look) => look.camera.azimuth);
+  const elevation = useLook((look) => look.camera.elevation);
 
   const saveAngles = useCallback(() => {
     const offset = camera.position.clone().sub(controls.current?.target ?? new Vector3());
@@ -267,6 +280,14 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
     camera.position.copy(target).add(offset.setLength(distanceFor(zoom)));
     controls.current?.update();
   }, [camera, zoom]);
+
+  useEffect(() => {
+    const target = controls.current?.target ?? new Vector3();
+    const wanted = new Vector3(...cameraPosition({ ...getLook().camera, azimuth, elevation })).add(target);
+    if (camera.position.distanceTo(wanted) < 1e-3) return;
+    camera.position.copy(wanted);
+    controls.current?.update();
+  }, [camera, azimuth, elevation]);
 
   useEffect(() => {
     const element = keyTarget.current;
