@@ -363,13 +363,6 @@ describe("Export", () => {
     expect(buttonNamed("Cancel")).toBeUndefined();
   });
 
-  it("reports the exported count when a set finishes", async () => {
-    stubDownloads();
-    renderGate = Promise.resolve();
-    act(() => setButton()?.click());
-    await flush();
-    expect(container.querySelector("[aria-live=polite]")?.textContent).toBe("Exported 12 icons.");
-  });
 
   const statusText = () => container.querySelector("[aria-live=polite]")?.textContent;
   async function exportAddedSet() {
@@ -380,6 +373,8 @@ describe("Export", () => {
     await flush();
     expect(statusText()).toBe("Exported 1 icons.");
   }
+
+  it("reports the exported count when a set finishes", exportAddedSet);
 
   it("clears the exported count when the icon changes", async () => {
     await exportAddedSet();
