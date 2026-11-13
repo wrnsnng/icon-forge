@@ -185,8 +185,8 @@ const PRESET_OPTIONS: Preset["id"][] = ["zest-light", "zest-dark", "selekt-light
 
 const applyPreset = (id: Look["preset"]) => {
   const preset = PRESETS.find((candidate) => candidate.id === id);
-  if (!preset) return;
   const look = getLook();
+  if (!preset) return setLook({ ...look, preset: id });
   setLook({
     ...look,
     preset: preset.id,

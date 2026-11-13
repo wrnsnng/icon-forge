@@ -223,6 +223,14 @@ describe("Look controls", () => {
     expect(presetLabel()).toBe(label);
   });
 
+  it("keeps every look value when Custom is chosen directly", () => {
+    choosePreset("Selekt-2 dark");
+    const before = getLook();
+    choosePreset("Custom");
+    expect(presetLabel()).toBe("Custom");
+    expect(getLook()).toEqual({ ...before, preset: "custom" });
+  });
+
   it("shows Custom after a manual Colour change and after a manual Background change", () => {
     choosePreset("Selekt-2 dark");
     const swatch = [...container.querySelectorAll<HTMLButtonElement>(".colour-popover .swatch")].find((button) =>
