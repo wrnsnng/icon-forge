@@ -17,6 +17,7 @@ type Exporting = { kind: "png" | "set"; controller: AbortController; progress?: 
 type Job = { signal: AbortSignal; look: Look; render: RenderPng; progress: (n: number, total: number) => void };
 
 const EXPORT_FAILED = "Export failed. Try again.";
+const NOTHING_SELECTED = "Select at least one size and scale.";
 const SET_LABELS: Record<string, string> = { [ZEST_GROUP]: "Export Zest set", [SELEKT_GROUP]: "Export Selekt-2 set" };
 const SIZES: Look["export"]["sizes"] = [16, 20, 24];
 const SCALES: Look["export"]["scales"] = [1, 2, 4];
@@ -80,7 +81,8 @@ export function App() {
   const setInput = useRef<HTMLInputElement>(null);
   const [setFiles, setSetFiles] = useState<SetItem[]>([]);
   const [exporting, setExporting] = useState<Exporting | null>(null);
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState<{ text: string; icon: Icon; files: SetItem[] } | null>(null);
+  const nothingSelected = useLook(({ export: { sizes, scales } }) => sizes.length === 0 || scales.length === 0);
 
   const showToast = (message: string | undefined) => {
     toastCount.current += 1;
@@ -170,9 +172,10 @@ export function App() {
   const setLabel = setFiles.length > 0 ? `Export set (${setFiles.length} SVGs)` : (group && SET_LABELS[group]) ?? "Export set";
 
   const runExport = async (kind: Exporting["kind"], work: (job: Job) => Promise<void>) => {
+    if (nothingSelected) return;
     const controller = new AbortController();
     setExporting({ kind, controller });
-    setStatus("");
+    setStatus(null);
     const look = getLook();
     const renderer = createPngRenderer(look);
     try {
@@ -199,7 +202,7 @@ export function App() {
       const result = await exportSet(items, look, render, { signal, onProgress: (n) => progress(n, items.length) });
       if (!result) return;
       download(result.zip, filename);
-      setStatus(doneMessage(result.ok, result.failed));
+      setStatus({ text: doneMessage(result.ok, result.failed), icon, files: setFiles });
     });
   };
 
@@ -305,14 +308,17 @@ export function App() {
           <h2>Export</h2>
           <CheckboxGroup legend="Sizes (px)" field="sizes" options={SIZES} format={(size) => String(size)} />
           <CheckboxGroup legend="Scales" field="scales" options={SCALES} format={(scale) => `${scale}x`} />
-          <button type="button" disabled={exporting !== null} aria-busy={exporting?.kind === "png"} onClick={() => void exportPng()}>
-            {exporting?.kind === "png" && <span className="spinner" aria-hidden="true" />}
-            Export PNG
-          </button>
-          <button type="button" disabled={exporting !== null || setItems.length === 0} aria-busy={exporting?.kind === "set"} onClick={() => void exportSetZip()}>
-            {exporting?.kind === "set" && <span className="spinner" aria-hidden="true" />}
-            {setLabel}
-          </button>
+          {nothingSelected && <p className="helper">{NOTHING_SELECTED}</p>}
+          <div className="export-actions">
+            <button type="button" disabled={exporting !== null || nothingSelected} aria-busy={exporting?.kind === "png"} onClick={() => void exportPng()}>
+              {exporting?.kind === "png" && <span className="spinner" aria-hidden="true" />}
+              Export PNG
+            </button>
+            <button type="button" disabled={exporting !== null || nothingSelected || setItems.length === 0} aria-busy={exporting?.kind === "set"} onClick={() => void exportSetZip()}>
+              {exporting?.kind === "set" && <span className="spinner" aria-hidden="true" />}
+              {setLabel}
+            </button>
+          </div>
           <button type="button" onClick={() => setInput.current?.click()}>
             Add SVGs…
           </button>
@@ -328,7 +334,7 @@ export function App() {
             }}
           />
           <div className="export-status" aria-live="polite">
-            {exporting?.progress ? `Rendering ${exporting.progress.n} of ${exporting.progress.total}…` : status}
+            {exporting?.progress ? `Rendering ${exporting.progress.n} of ${exporting.progress.total}…` : status?.icon === icon && status.files === setFiles ? status.text : ""}
           </div>
           {exporting?.kind === "set" && (
             <button type="button" onClick={() => exporting.controller.abort()}>

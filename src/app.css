@@ -189,6 +189,12 @@ body {
   cursor: pointer;
 }
 
+.panel button:disabled {
+  color: var(--color-ink-600);
+  opacity: 0.65;
+  cursor: default;
+}
+
 .panel input[type="range"] {
   width: 100%;
   height: 16px;
@@ -378,7 +384,8 @@ fieldset.field legend {
   box-shadow: 0 0 0 2px var(--color-ink-0), 0 0 0 4px var(--color-ink-900);
 }
 
-.panel input[type="radio"] {
+.panel input[type="radio"],
+.panel input[type="checkbox"] {
   accent-color: var(--color-ink-900);
 }
 
@@ -397,6 +404,21 @@ fieldset.field legend {
   to {
     transform: rotate(360deg);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.checkboxes label {
+  min-height: 24px;
+}
+
+.export-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .export-status:empty {
