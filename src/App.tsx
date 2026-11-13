@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { BackgroundPicker, ColourPicker, Slider, Toggle, type SliderSpec } from "./Controls";
+import { BackgroundPicker, ColourPicker, PresetPicker, Slider, Toggle, type SliderSpec } from "./Controls";
 import { BACKGROUND_SWATCHES, COLOUR_SWATCHES } from "./presets";
 import { updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
@@ -147,6 +147,7 @@ export function App() {
       <aside className="panel">
         <section className="panel-section">
           <h2>Preset</h2>
+          <PresetPicker />
         </section>
         <section className="panel-section">
           <h2>Icon</h2>

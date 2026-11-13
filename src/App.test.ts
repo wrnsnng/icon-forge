@@ -177,6 +177,75 @@ describe("Look controls", () => {
     expect(container.querySelector(".colour-trigger")?.getAttribute("aria-label")).toBe("Colour, --color-ink-100 #f8f6f4");
   });
 
+  const presetSelect = () => container.querySelector<HTMLSelectElement>("#preset-select");
+  const choosePreset = (label: string) => {
+    const select = presetSelect();
+    const option = [...(select?.options ?? [])].find((candidate) => candidate.text === label);
+    if (!select || !option) throw new Error(`No preset ${label}`);
+    act(() => {
+      select.value = option.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+  const presetLabel = () => presetSelect()?.selectedOptions[0]?.text;
+
+  it("offers the design systems in copy order and starts on Zest light", () => {
+    expect(container.querySelector("label[for=preset-select]")?.textContent).toBe("Design system");
+    expect([...(presetSelect()?.options ?? [])].map((option) => option.text)).toEqual([
+      "Zest light",
+      "Zest dark",
+      "Selekt-2 light",
+      "Selekt-2 dark",
+      "Custom",
+    ]);
+    expect(presetLabel()).toBe("Zest light");
+    expect(getLook().preset).toBe("zest-light");
+  });
+
+  it.each([
+    ["Zest dark", "zest-dark", "#f8f6f4", "#151311", "#ff815f"],
+    ["Selekt-2 light", "selekt-light", "#181818", "#e7e7e7", "#181818"],
+    ["Selekt-2 dark", "selekt-dark", "#f0eee7", "#0d0b07", "#f0eee7"],
+    ["Zest light", "zest-light", "#060605", "#ffffff", "#ff4c1f"],
+  ])("applies %s colour, background and accent and nothing else", (label, id, colour, background, accent) => {
+    choosePreset(label === "Zest light" ? "Selekt-2 dark" : "Zest light");
+    act(() => setLook({ ...getLook(), shape: { ...getLook().shape, bevel: 77 }, lights: { rotation: 90, exposure: 2 }, camera: { ...getLook().camera, zoom: 150 } }));
+    const before = getLook();
+    choosePreset(label);
+    const after = getLook();
+    expect([after.preset, after.material.color, after.camera.background, after.accent]).toEqual([id, colour, background, accent]);
+    expect([after.shape, after.lights, { ...after.camera, background: before.camera.background }, { ...after.material, color: before.material.color }]).toEqual([
+      before.shape,
+      before.lights,
+      before.camera,
+      before.material,
+    ]);
+    expect(presetLabel()).toBe(label);
+  });
+
+  it("keeps every look value when Custom is chosen directly", () => {
+    choosePreset("Selekt-2 dark");
+    const before = getLook();
+    choosePreset("Custom");
+    expect(presetLabel()).toBe("Custom");
+    expect(getLook()).toEqual({ ...before, preset: "custom" });
+  });
+
+  it("shows Custom after a manual Colour change and after a manual Background change", () => {
+    choosePreset("Selekt-2 dark");
+    const swatch = [...container.querySelectorAll<HTMLButtonElement>(".colour-popover .swatch")].find((button) =>
+      button.getAttribute("aria-label")?.startsWith("Zest light colour"),
+    );
+    act(() => swatch?.click());
+    expect(presetLabel()).toBe("Custom");
+    expect(getLook().preset).toBe("custom");
+
+    choosePreset("Zest dark");
+    act(() => container.querySelector<HTMLInputElement>("input[name=background][aria-label=Transparent]")?.click());
+    expect(presetLabel()).toBe("Custom");
+    expect(getLook().camera.background).toBe("transparent");
+  });
+
   it("closes the colour popover on a backdrop click but not on a click inside it", () => {
     const dialog = container.querySelector<HTMLDialogElement>(".colour-popover");
     if (!dialog) throw new Error("No colour popover");

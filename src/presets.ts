@@ -1,5 +1,7 @@
+import type { Look } from "./look";
+
 export type Token = { token: string; hex: string; source: string };
-export type Preset = { id: string; name: string; colour: Token; background: Token; accent: Token };
+export type Preset = { id: Exclude<Look["preset"], "custom">; name: string; colour: Token; background: Token; accent: Token };
 export type Swatch = { name: string; token: string; hex: string };
 export type ColourRole = "colour" | "accent";
 export type ColourSwatch = Swatch & { roles: ColourRole[] };
