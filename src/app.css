@@ -424,3 +424,13 @@ fieldset.field legend {
 .export-status:empty {
   display: none;
 }
+
+.viewport-building {
+  animation: building-in 100ms step-end both;
+}
+
+@keyframes building-in {
+  from {
+    opacity: 0;
+  }
+}

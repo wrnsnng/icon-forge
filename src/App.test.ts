@@ -78,6 +78,7 @@ function paste(text: string) {
   const event = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", { value: { getData: () => text } });
   act(() => document.body.dispatchEvent(event));
+  act(() => vi.advanceTimersByTime(50));
 }
 
 const alertText = () => container.querySelector("[role=alert]")?.textContent ?? null;
@@ -450,14 +451,12 @@ describe("Export", () => {
       for (const box of group.querySelectorAll<HTMLInputElement>("input[type=checkbox]")) act(() => box.click());
     };
 
-    it("disables both exports, explains why, and downloads nothing", async () => {
+    it("disables both exports and downloads nothing", async () => {
       const createObjectURL = vi.fn(() => "blob:zip");
       stubDownloads(createObjectURL);
-      expect(container.textContent).not.toContain("Select at least one size and scale.");
       uncheckAll();
       expect(buttonNamed("Export PNG")?.disabled).toBe(true);
       expect(setButton()?.disabled).toBe(true);
-      expect(container.textContent).toContain("Select at least one size and scale.");
       act(() => buttonNamed("Export PNG")?.click());
       act(() => setButton()?.click());
       await flush();

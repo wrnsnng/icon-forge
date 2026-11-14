@@ -23,7 +23,6 @@ type ExportKind = "png" | "set" | "spin" | "glb";
 type Exporting = { kind: ExportKind; controller: AbortController; progress?: { n: number; total: number }; seconds?: number };
 type Job = { signal: AbortSignal; update: (patch: Pick<Exporting, "progress" | "seconds">) => void };
 
-const NOTHING_SELECTED = "Select at least one size and scale.";
 const SET_LABELS: Record<string, string> = { [ZEST_GROUP]: "Export Zest set", [SELEKT_GROUP]: "Export Selekt-2 set" };
 const SIZES: Look["export"]["sizes"] = [16, 20, 24];
 const SCALES: Look["export"]["scales"] = [1, 2, 4];
@@ -47,7 +46,7 @@ function ExportButton({ kind, exporting, disabled = false, helper = false, onCli
     <button
       type="button"
       onClick={onClick}
-      disabled={exporting !== null || disabled}
+      disabled={!hasWebGL2 || exporting !== null || disabled}
       aria-busy={exporting?.kind === kind}
       aria-describedby={helper ? `export-${kind}-helper` : undefined}
     >
@@ -108,6 +107,7 @@ export function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const toastCount = useRef(0);
   const [dragging, setDragging] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [spin, setSpin] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const material = useLook((look) => look.material.type);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -143,14 +143,20 @@ export function App() {
     setToast(message ? { id: toastCount.current, message } : null);
   };
   const loadSvg = (text: string, name = "icon") => {
-    const result = buildIcon(text);
-    if (!result.ok) {
-      showToast(result.error);
-      return;
-    }
-    setCustomIcon({ name, geometry: result });
-    setIcon({ id: CUSTOM_ID, name, geometry: result });
-    showToast(result.warning);
+    setBuilding(true);
+    requestAnimationFrame(() =>
+      setTimeout(() => {
+        setBuilding(false);
+        const result = buildIcon(text);
+        if (!result.ok) {
+          showToast(result.error);
+          return;
+        }
+        setCustomIcon({ name, geometry: result });
+        setIcon({ id: CUSTOM_ID, name, geometry: result });
+        showToast(result.warning);
+      }),
+    );
   };
   const loadLook = (text: string) => {
     const look = parseLook(text);
@@ -321,7 +327,7 @@ export function App() {
   return (
     <main className="app">
       <h1 className="visually-hidden">Icon Forge</h1>
-      <Viewport icon={icon.geometry} dragging={dragging} toast={toast} spin={spin} onSpinChange={setSpin} />
+      <Viewport icon={icon.geometry} building={building} dragging={dragging} toast={toast} spin={spin} onSpinChange={setSpin} />
       <aside className="panel">
         <section className="panel-section">
           <h2>Preset</h2>
@@ -415,7 +421,6 @@ export function App() {
           <h2>Export</h2>
           <CheckboxGroup legend="Sizes (px)" field="sizes" options={SIZES} format={(size) => String(size)} />
           <CheckboxGroup legend="Scales" field="scales" options={SCALES} format={(scale) => `${scale}x`} />
-          {nothingSelected && <p className="helper">{NOTHING_SELECTED}</p>}
           <div className="export-actions">
             <ExportButton kind="png" exporting={exporting} disabled={nothingSelected} onClick={exportPng}>
               Export PNG
@@ -446,13 +451,13 @@ export function App() {
               Cancel
             </button>
           )}
-          <ExportButton kind="spin" exporting={exporting} disabled={!hasWebGL2 || !spinCodec} helper onClick={exportSpin}>
+          <ExportButton kind="spin" exporting={exporting} disabled={!spinCodec} helper onClick={exportSpin}>
             Export spin
           </ExportButton>
           <p id="export-spin-helper" className="helper" aria-live="polite">
             {spinText}
           </p>
-          <ExportButton kind="glb" exporting={exporting} disabled={!hasWebGL2} helper onClick={exportGlbFile}>
+          <ExportButton kind="glb" exporting={exporting} helper onClick={exportGlbFile}>
             Export GLB
           </ExportButton>
           <p id="export-glb-helper" className="helper">

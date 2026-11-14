@@ -2,8 +2,8 @@ import { Environment, MeshTransmissionMaterial, OrbitControls, useEnvironment, u
 import { Canvas, extend, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, DepthOfField, EffectComposer, ToneMapping } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
-import { Suspense, useCallback, type ReactNode, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { BufferAttribute, BufferGeometry, EquirectangularReflectionMapping, Euler, ExtrudeGeometry, Group, MathUtils, Mesh, MeshPhysicalMaterial, Spherical, Vector2, Vector3, type ExtrudeGeometryOptions, type Shape, type Texture } from "three";
+import { Suspense, useCallback, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { BufferAttribute, BufferGeometry, EquirectangularReflectionMapping, Euler, ExtrudeGeometry, Group, MathUtils, Mesh, MeshPhysicalMaterial, Vector2, Vector3, type ExtrudeGeometryOptions, type Shape, type Texture } from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { TessellateModifier } from "three/addons/modifiers/TessellateModifier.js";
@@ -15,6 +15,7 @@ import type { IconGeometry } from "./svgIcon";
 export type Toast = { id: number; message: string };
 
 const LOADING_LIGHTING = "Loading lighting…";
+const BUILDING_ICON = "Building icon…";
 const DROP_OVERLAY = "Drop SVG to load";
 const WEBGL_ERROR = "Icon Forge needs WebGL 2, which isn't available in this browser.";
 const CAMERA_DISTANCE = 3;
@@ -29,7 +30,8 @@ const BULGE_EDGE = 0.012;
 const OUTLINE_DIVISIONS = 12;
 const OUTLINE_CELL = 0.025;
 const SPIN_RADIANS_PER_SECOND = (2 * Math.PI) / 8;
-const ORBIT_STEP = MathUtils.degToRad(15);
+const ORBIT_DEGREES = 15;
+const MAX_ELEVATION = 89;
 const ZOOM_KEY_STEP = 10;
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
@@ -259,7 +261,7 @@ export function StudioScene(props: Omit<LookSceneProps, "environment">) {
   return <LookScene environment={environment} {...props} />;
 }
 
-function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTarget: RefObject<HTMLDivElement | null>; spin: boolean; onSpinChange: (spin: boolean) => void; onOrbitingChange: (orbiting: boolean) => void }) {
+function CameraRig({ onOrbitingChange }: { onOrbitingChange: (orbiting: boolean) => void }) {
   const controls = useRef<OrbitControlsImpl>(null);
   const camera = useThree((state) => state.camera);
   const zoom = useLook((look) => look.camera.zoom);
@@ -289,40 +291,6 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
     controls.current?.update();
   }, [camera, azimuth, elevation]);
 
-  useEffect(() => {
-    const element = keyTarget.current;
-    if (!element) return;
-    const orbit = (dTheta: number, dPhi: number) => {
-      const target = controls.current?.target ?? new Vector3();
-      const spherical = new Spherical().setFromVector3(camera.position.clone().sub(target));
-      spherical.theta += dTheta;
-      spherical.phi = MathUtils.clamp(spherical.phi + dPhi, 0.01, Math.PI - 0.01);
-      camera.position.copy(target).add(new Vector3().setFromSpherical(spherical));
-      controls.current?.update();
-      saveAngles();
-    };
-    const setZoom = (delta: number) =>
-      updateLook("camera", { zoom: MathUtils.clamp(getLook().camera.zoom + delta, MIN_ZOOM, MAX_ZOOM) });
-    const actions: Record<string, () => void> = {
-      ArrowLeft: () => orbit(-ORBIT_STEP, 0),
-      ArrowRight: () => orbit(ORBIT_STEP, 0),
-      ArrowUp: () => orbit(0, -ORBIT_STEP),
-      ArrowDown: () => orbit(0, ORBIT_STEP),
-      "+": () => setZoom(ZOOM_KEY_STEP),
-      "=": () => setZoom(ZOOM_KEY_STEP),
-      "-": () => setZoom(-ZOOM_KEY_STEP),
-      " ": () => onSpinChange(!spin),
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      const action = actions[event.key];
-      if (!action || event.target !== element) return;
-      event.preventDefault();
-      action();
-    };
-    element.addEventListener("keydown", onKeyDown);
-    return () => element.removeEventListener("keydown", onKeyDown);
-  }, [camera, keyTarget, spin, onSpinChange, saveAngles]);
-
   const syncZoom = () => {
     const target = controls.current?.target ?? new Vector3();
     const next = MathUtils.clamp((CAMERA_DISTANCE * 100) / camera.position.distanceTo(target), MIN_ZOOM, MAX_ZOOM);
@@ -346,7 +314,7 @@ function CameraRig({ keyTarget, spin, onSpinChange, onOrbitingChange }: { keyTar
   );
 }
 
-function Scene({ icon, spin, keyTarget, onSpinChange }: { icon: IconGeometry; spin: boolean; keyTarget: RefObject<HTMLDivElement | null>; onSpinChange: (spin: boolean) => void }) {
+function Scene({ icon, spin }: { icon: IconGeometry; spin: boolean }) {
   const look = useLook((current) => current);
   const [orbiting, setOrbiting] = useState(false);
 
@@ -355,23 +323,40 @@ function Scene({ icon, spin, keyTarget, onSpinChange }: { icon: IconGeometry; sp
       <Suspense fallback={null}>
         <StudioScene icon={icon} look={look} spin={spin && !orbiting} />
       </Suspense>
-      <CameraRig keyTarget={keyTarget} spin={spin} onSpinChange={onSpinChange} onOrbitingChange={setOrbiting} />
+      <CameraRig onOrbitingChange={setOrbiting} />
     </>
   );
 }
 
 type ViewportProps = {
   icon: IconGeometry;
+  building: boolean;
   dragging: boolean;
   toast: Toast | null;
   spin: boolean;
   onSpinChange: (spin: boolean) => void;
 };
 
-export function Viewport({ icon, dragging, toast, spin, onSpinChange }: ViewportProps) {
+const wrapDegrees = (degrees: number) => ((((degrees + 180) % 360) + 360) % 360) - 180;
+const orbit = (dAzimuth: number, dElevation: number) => ({ azimuth, elevation }: Look["camera"]) => ({
+  azimuth: wrapDegrees(azimuth + dAzimuth),
+  elevation: MathUtils.clamp(elevation + dElevation, -MAX_ELEVATION, MAX_ELEVATION),
+});
+const zoomBy = (delta: number) => ({ zoom }: Look["camera"]) => ({ zoom: MathUtils.clamp(zoom + delta, MIN_ZOOM, MAX_ZOOM) });
+const KEY_ACTIONS: Record<string, "spin" | ((camera: Look["camera"]) => Partial<Look["camera"]>)> = {
+  ArrowLeft: orbit(-ORBIT_DEGREES, 0),
+  ArrowRight: orbit(ORBIT_DEGREES, 0),
+  ArrowUp: orbit(0, ORBIT_DEGREES),
+  ArrowDown: orbit(0, -ORBIT_DEGREES),
+  "+": zoomBy(ZOOM_KEY_STEP),
+  "=": zoomBy(ZOOM_KEY_STEP),
+  "-": zoomBy(-ZOOM_KEY_STEP),
+  " ": "spin",
+};
+
+export function Viewport({ icon, building, dragging, toast, spin, onSpinChange }: ViewportProps) {
   const loading = useProgress((state) => state.active);
   const background = useLook((look) => look.camera.background);
-  const keyTarget = useRef<HTMLDivElement>(null);
 
   if (!hasWebGL2) {
     return (
@@ -385,12 +370,28 @@ export function Viewport({ icon, dragging, toast, spin, onSpinChange }: Viewport
       className={background === "transparent" ? "viewport viewport-transparent" : "viewport"}
       style={background === "transparent" ? undefined : { background }}
     >
-      <div ref={keyTarget} className="viewport-stage" tabIndex={0} role="application" aria-label={VIEWPORT_LABEL}>
+      <div
+        className="viewport-stage"
+        tabIndex={0}
+        role="application"
+        aria-label={VIEWPORT_LABEL}
+        onKeyDown={(event) => {
+          const action = KEY_ACTIONS[event.key];
+          if (!action || event.target !== event.currentTarget) return;
+          event.preventDefault();
+          if (action === "spin") onSpinChange(!spin);
+          else updateLook("camera", action(getLook().camera));
+        }}
+      >
         <Canvas camera={{ fov: CAMERA_FOV, position: cameraPosition(getLook().camera) }}>
-          <Scene icon={icon} spin={spin} keyTarget={keyTarget} onSpinChange={onSpinChange} />
+          <Scene icon={icon} spin={spin} />
         </Canvas>
       </div>
-      {loading && <div className="viewport-status">{LOADING_LIGHTING}</div>}
+      {building ? (
+        <div className="viewport-status viewport-building">{BUILDING_ICON}</div>
+      ) : (
+        loading && <div className="viewport-status">{LOADING_LIGHTING}</div>
+      )}
       {dragging && <div className="viewport-drop">{DROP_OVERLAY}</div>}
       {toast && (
         <div key={toast.id} className="toast" role="alert">
