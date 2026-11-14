@@ -31,9 +31,29 @@ vi.mock("react", async (original) => {
 vi.mock("./Viewport", async (original) => ({
   ...(await original<typeof import("./Viewport")>()),
   hasWebGL2: true,
-  Viewport: ({ toast }: { toast: Toast | null }) =>
-    toast ? createElement("div", { key: toast.id, role: "alert" }, toast.message) : null,
+  Viewport: ({ toast, building }: { toast: Toast | null; building: boolean }) =>
+    createElement(
+      "div",
+      null,
+      building && createElement("div", { className: "viewport-status" }, "Building icon…"),
+      toast && createElement("div", { key: toast.id, role: "alert" }, toast.message),
+    ),
 }));
+
+type HeldBuild = { release: () => void; fail: (error: Error) => void };
+let heldBuilds: HeldBuild[] | null = null;
+vi.mock("./svgIcon", async (original) => {
+  const real = await original<typeof import("./svgIcon")>();
+  return {
+    ...real,
+    buildIconYielding: async (text: string, signal: AbortSignal) => {
+      if (!heldBuilds) return real.buildIconYielding(text, signal);
+      const builds = heldBuilds;
+      await new Promise<void>((release, fail) => builds.push({ release, fail }));
+      return real.buildIcon(text);
+    },
+  };
+});
 
 let renderGate: Promise<void> = Promise.resolve();
 vi.mock("./renderPng", () => ({
@@ -99,6 +119,7 @@ function mount() {
 }
 
 beforeEach(() => {
+  heldBuilds = null;
   reducedMotion = false;
   setLook(DEFAULT_LOOK);
   Blob.prototype.text ??= function (this: Blob) {
@@ -134,6 +155,52 @@ describe("App input errors", () => {
     await act(async () => vi.advanceTimersByTimeAsync(1000));
     expect(alertText()).toBe(ERROR_NOT_SVG);
     expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+  });
+
+  describe("with a build in progress", () => {
+    const building = () => container.querySelector(".viewport-status")?.textContent ?? null;
+    const startHeldBuild = async (text: string) => {
+      startPaste(text);
+      await act(async () => vi.advanceTimersByTimeAsync(50));
+    };
+    beforeEach(() => {
+      heldBuilds = [];
+    });
+
+    it("drops a replaced build's result after it has yielded", async () => {
+      await startHeldBuild(VALID_SVG);
+      expect(heldBuilds).toHaveLength(1);
+      await startHeldBuild(INVALID_SVG);
+      await act(async () => heldBuilds?.[1]?.release());
+      await act(async () => heldBuilds?.[0]?.release());
+      expect(alertText()).toBe(ERROR_NOT_SVG);
+      expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+      expect(building()).toBeNull();
+    });
+
+    it("drops a replaced build's result after Building icon… shows, and clears the overlay when the new build ends", async () => {
+      await startHeldBuild(VALID_SVG);
+      await act(async () => vi.advanceTimersByTimeAsync(100));
+      expect(building()).toBe("Building icon…");
+      await startHeldBuild(INVALID_SVG);
+      await act(async () => heldBuilds?.[0]?.release());
+      expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+      expect(building()).toBe("Building icon…");
+      await act(async () => heldBuilds?.[1]?.release());
+      expect(building()).toBeNull();
+      expect(alertText()).toBe(ERROR_NOT_SVG);
+      expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+    });
+
+    it("clears the overlay, keeps the icon and shows the not-SVG error when the build throws", async () => {
+      await startHeldBuild(VALID_SVG);
+      await act(async () => vi.advanceTimersByTimeAsync(100));
+      expect(building()).toBe("Building icon…");
+      await act(async () => heldBuilds?.[0]?.fail(new Error("boolean operation failed")));
+      expect(building()).toBeNull();
+      expect(alertText()).toBe(ERROR_NOT_SVG);
+      expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+    });
   });
 
   it("drops a pending SVG build on unmount with no state update", async () => {
@@ -482,6 +549,22 @@ describe("Export", () => {
       if (!group) throw new Error(`${legend} group is missing`);
       for (const box of group.querySelectorAll<HTMLInputElement>("input[type=checkbox]")) act(() => box.click());
     };
+
+    it("exports nothing even if a disabled export's handler runs", async () => {
+      const createObjectURL = vi.fn(() => "blob:zip");
+      stubDownloads(createObjectURL);
+      uncheckAll();
+      const runHandler = (button: HTMLButtonElement | undefined) => {
+        const props = Object.entries(button ?? {}).find(([key]) => key.startsWith("__reactProps$"))?.[1] as { onClick?: () => void } | undefined;
+        if (!props?.onClick) throw new Error("Export button has no click handler");
+        act(() => props.onClick?.());
+      };
+      runHandler(buttonNamed("Export PNG"));
+      runHandler(setButton());
+      await flush();
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(container.querySelector("[aria-busy=true]")).toBeNull();
+    });
 
     it("disables both exports and downloads nothing", async () => {
       const createObjectURL = vi.fn(() => "blob:zip");

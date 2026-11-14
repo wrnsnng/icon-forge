@@ -86,16 +86,22 @@ describe("Viewport keyboard", () => {
   });
 });
 
+const ringsSvg = () =>
+  `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20'>${Array.from({ length: 24 }, (_, i) => `<circle cx="${(i % 12) * 8 + 4}" cy="${Math.floor(i / 12) * 8 + 4}" r="6" fill="none" stroke="black" stroke-width="1.5"/>`).join("")}</svg>`;
+const onePathSvg = () =>
+  `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path fill="none" stroke="black" stroke-width="1.5" d="${Array.from({ length: 100 }, (_, i) => `M${(i % 10) * 10 + 2} ${Math.floor(i / 10) * 10 + 2}l6 0l-3 6z`).join("")}"/></svg>`;
+
 describe("Loading", () => {
-  it("shows Building icon… during a slow SVG build and clears it when the build ends", async () => {
+  it.each([
+    ["24 separate circles", ringsSvg],
+    ["one path with 100 subpaths", onePathSvg],
+  ])("shows Building icon… during a slow build of %s and clears it when the build ends", async (_, slowSvg) => {
     vi.useRealTimers();
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
-    const rings = Array.from({ length: 24 }, (_, i) => `<circle cx="${(i % 12) * 8 + 4}" cy="${Math.floor(i / 12) * 8 + 4}" r="6" fill="none" stroke="black" stroke-width="1.5"/>`);
-    const slowSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20'>${rings.join("")}</svg>`;
     const status = () => container.querySelector(".viewport-status")?.textContent ?? "";
     const started = performance.now();
     const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", { value: { getData: () => slowSvg } });
+    Object.defineProperty(event, "clipboardData", { value: { getData: slowSvg } });
     document.body.dispatchEvent(event);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(status()).toBe("");

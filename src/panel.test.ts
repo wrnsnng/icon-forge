@@ -125,6 +125,14 @@ describe("Keyboard", () => {
   });
 });
 
+describe("Sliders", () => {
+  it("gives every range input a 32px tall hit area", () => {
+    const ranges = [...container.querySelectorAll<HTMLInputElement>(".panel input[type=range]")];
+    expect(ranges.length).toBeGreaterThan(0);
+    expect(new Set(ranges.map((range) => getComputedStyle(range).height))).toEqual(new Set(["32px"]));
+  });
+});
+
 describe("Contrast", () => {
   const token = (name: string) => CSS.match(new RegExp(`${name}: (#[0-9a-f]{6})`))?.[1] ?? "";
   const luminance = (hex: string) => {

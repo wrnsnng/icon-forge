@@ -62,6 +62,7 @@ function* toPaperPaths(svg: string): Generator<void, paper.PathItem[]> {
     const stroked = style.stroke !== undefined && style.stroke !== "none" && style.strokeWidth > 0;
     const fill = new paper.CompoundPath({ insert: false, fillRule: style.fillRule === "evenodd" ? "evenodd" : "nonzero" });
     for (const subPath of shapePath.subPaths) {
+      yield;
       const points = subPath.getPoints(CURVE_DIVISIONS).map((p) => new paper.Point(p.x, p.y));
       const first = points[0];
       const last = points[points.length - 1];
@@ -70,6 +71,7 @@ function* toPaperPaths(svg: string): Generator<void, paper.PathItem[]> {
       if (filled) fill.addChild(new paper.Path({ segments: points, closed: true, insert: false }));
       if (stroked) outlines.push(outlineStroke(points, closed, style));
     }
+    yield;
     if (fill.children.length > 0) outlines.push(fill.unite(new paper.Path({ insert: false }), { insert: false }));
   }
   return outlines;
@@ -79,6 +81,7 @@ function* buildSteps(svgText: string): Generator<void, IconResult> {
   if (new Blob([svgText]).size > MAX_SVG_BYTES) return { ok: false, error: ERROR_TOO_LARGE };
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  yield;
   const root = doc.documentElement;
   if (doc.querySelector("parsererror") || root.localName !== "svg") return { ok: false, error: ERROR_NOT_SVG };
 
@@ -101,6 +104,7 @@ function* buildSteps(svgText: string): Generator<void, IconResult> {
   united.translate(center.multiply(-1));
   united.scale(scale, -scale, new paper.Point(0, 0));
 
+  yield;
   const pathData = united.pathData;
   const shapes = new SVGLoader()
     .parse(`<svg xmlns="http://www.w3.org/2000/svg"><path d="${pathData}"/></svg>`)

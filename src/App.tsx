@@ -4,7 +4,7 @@ import { exportIcon, exportSet, iconSlug, type RenderPng, type SetItem } from ".
 import { BACKGROUND_SWATCHES, COLOUR_SWATCHES } from "./presets";
 import { getLook, parseLook, setLook, updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
-import { buildIcon, buildIconYielding, ERROR_NOT_SVG, type IconGeometry } from "./svgIcon";
+import { buildIcon, buildIconYielding, ERROR_NOT_SVG, type IconGeometry, type IconResult } from "./svgIcon";
 import { exportGlb } from "./glb";
 import { createPngRenderer } from "./renderPng";
 import { renderSpin } from "./renderSpin";
@@ -163,13 +163,11 @@ export function App() {
     const reveal = setTimeout(() => setBuilding(true), BUILDING_REVEAL_MS);
     signal.addEventListener("abort", () => clearTimeout(reveal), { once: true });
     await afterPaint(signal);
-    const result = await buildIconYielding(text, signal).finally(() => {
-      if (signal.aborted) return;
-      clearTimeout(reveal);
-      pendingSvg.current = null;
-      setBuilding(false);
-    });
-    if (!result) return;
+    const result = await buildIconYielding(text, signal).catch((): IconResult => ({ ok: false, error: ERROR_NOT_SVG }));
+    if (signal.aborted || !result) return;
+    clearTimeout(reveal);
+    pendingSvg.current = null;
+    setBuilding(false);
     if (!result.ok) {
       showToast(result.error);
       return;
