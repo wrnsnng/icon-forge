@@ -144,7 +144,7 @@ describe("Contrast", () => {
 
   it("keeps the 1.2:1 divider colour off every control edge", () => {
     const rules = [...CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(([, , body]) => /border[^:]*:[^;]*--color-ink-200/.test(body ?? ""));
-    expect(rules.map(([, selector]) => selector?.trim())).toEqual([".panel", ".panel-section", ".panel", ".colour-popover"]);
+    expect(rules.map(([, selector]) => selector?.trim())).toEqual([".panel", ".panel-section", ".panel"]);
   });
 });
 

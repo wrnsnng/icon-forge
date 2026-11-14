@@ -28,7 +28,8 @@ vi.mock("react", async (original) => {
   };
 });
 
-vi.mock("./Viewport", () => ({
+vi.mock("./Viewport", async (original) => ({
+  ...(await original<typeof import("./Viewport")>()),
   hasWebGL2: true,
   Viewport: ({ toast }: { toast: Toast | null }) =>
     toast ? createElement("div", { key: toast.id, role: "alert" }, toast.message) : null,
@@ -74,11 +75,15 @@ const VALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><
 let root: Root;
 let container: HTMLDivElement;
 
-function paste(text: string) {
+function startPaste(text: string) {
   const event = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", { value: { getData: () => text } });
   act(() => document.body.dispatchEvent(event));
-  act(() => vi.advanceTimersByTime(50));
+}
+
+async function paste(text: string) {
+  startPaste(text);
+  await act(async () => vi.advanceTimersByTimeAsync(50));
 }
 
 const alertText = () => container.querySelector("[role=alert]")?.textContent ?? null;
@@ -123,45 +128,63 @@ afterEach(() => {
 });
 
 describe("App input errors", () => {
-  it("keeps the previous icon when an import fails", () => {
+  it("lets a second paste replace one still waiting to build", async () => {
+    startPaste(VALID_SVG);
+    await paste(INVALID_SVG);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(alertText()).toBe(ERROR_NOT_SVG);
+    expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+  });
+
+  it("drops a pending SVG build on unmount with no state update", async () => {
+    startPaste(VALID_SVG);
+    act(() => root.unmount());
+    dispatchesAfterUnmount = 0;
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(dispatchesAfterUnmount).toBe(0);
+    dispatchesAfterUnmount = null;
+    mount();
+  });
+
+  it("keeps the previous icon when an import fails", async () => {
     const select = iconSelect();
     if (!select) throw new Error("Icon dropdown is missing");
     act(() => {
       select.value = "zest/StarIcon";
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    paste(INVALID_SVG);
+    await paste(INVALID_SVG);
     expect(alertText()).toBe(ERROR_NOT_SVG);
     expect(iconSelect()?.value).toBe("zest/StarIcon");
   });
 
-  it("keeps a loaded custom SVG when a later import fails", () => {
-    paste(VALID_SVG);
+  it("keeps a loaded custom SVG when a later import fails", async () => {
+    await paste(VALID_SVG);
     expect(iconSelect()?.value).toBe("custom");
-    paste(INVALID_SVG);
+    await paste(INVALID_SVG);
     expect(iconSelect()?.value).toBe("custom");
   });
 
-  it("dismisses an error six seconds after it shows", () => {
-    paste(INVALID_SVG);
+  it("dismisses an error six seconds after it shows", async () => {
+    await paste(INVALID_SVG);
     act(() => vi.advanceTimersByTime(5900));
     expect(alertText()).toBe(ERROR_NOT_SVG);
     act(() => vi.advanceTimersByTime(200));
     expect(alertText()).toBeNull();
   });
 
-  it("gives a repeated identical error its own six seconds", () => {
-    paste(INVALID_SVG);
+  it("gives a repeated identical error its own six seconds", async () => {
+    await paste(INVALID_SVG);
     act(() => vi.advanceTimersByTime(4000));
-    paste(INVALID_SVG);
+    await paste(INVALID_SVG);
     act(() => vi.advanceTimersByTime(5900));
     expect(alertText()).toBe(ERROR_NOT_SVG);
     act(() => vi.advanceTimersByTime(200));
     expect(alertText()).toBeNull();
   });
 
-  it("dismisses an error on Escape", () => {
-    paste(INVALID_SVG);
+  it("dismisses an error on Escape", async () => {
+    await paste(INVALID_SVG);
     act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(alertText()).toBeNull();
   });
@@ -388,7 +411,7 @@ describe("Export", () => {
   });
 
   it("disables Export set for a custom icon until SVGs are added", async () => {
-    paste(VALID_SVG);
+    await paste(VALID_SVG);
     expect(setButton()?.disabled).toBe(true);
     await addSvgs(3);
     expect(setButton()?.textContent).toBe("Export set (3 SVGs)");
@@ -422,10 +445,19 @@ describe("Export", () => {
     await addSvgs(1);
     act(() => setButton()?.click());
     await flush();
-    expect(statusText()).toBe("Exported 1 icons.");
+    expect(statusText()).toBe("Exported 1 icon.");
   }
 
   it("reports the exported count when a set finishes", exportAddedSet);
+
+  it("counts several exported icons in the plural", async () => {
+    stubDownloads();
+    renderGate = Promise.resolve();
+    await addSvgs(3);
+    act(() => setButton()?.click());
+    await flush();
+    expect(statusText()).toBe("Exported 3 icons.");
+  });
 
   it("clears the exported count when the icon changes", async () => {
     await exportAddedSet();
@@ -576,6 +608,7 @@ describe("Export section", () => {
     expect(iconSelect()?.value).not.toBe("custom");
 
     await drop(new File([VALID_SVG], "icon.svg", { type: "image/svg+xml" }));
+    await act(async () => vi.advanceTimersByTimeAsync(50));
     expect(iconSelect()?.value).toBe("custom");
     expect(getLook()).toEqual(OTHER_LOOK);
   });
@@ -640,7 +673,7 @@ describe("Export lock", () => {
     expect(control("Export spin")?.getAttribute("aria-busy")).toBe("true");
 
     await act(async () => spinResult?.resolve(new Blob(["webm"])));
-    expect(downloads).toEqual(["icon-spin.webm"]);
+    expect(downloads).toEqual(["sparkles-spin.webm"]);
     expect(disabledControls()).toEqual([false, false, false, false, false, false]);
   });
 
@@ -685,6 +718,14 @@ describe("Export lock", () => {
     expect(dispatchesAfterUnmount).toBe(0);
     dispatchesAfterUnmount = null;
     mount();
+  });
+
+  it("names the GLB after the icon", async () => {
+    await act(async () => {
+      control("Export GLB")?.click();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await vi.waitFor(() => expect(downloads).toEqual(["sparkles.glb"]));
   });
 
   it("disables the spin, GLB and look controls while a PNG set renders, and releases them on cancel", async () => {

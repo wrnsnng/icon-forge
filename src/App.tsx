@@ -4,7 +4,7 @@ import { exportIcon, exportSet, iconSlug, type RenderPng, type SetItem } from ".
 import { BACKGROUND_SWATCHES, COLOUR_SWATCHES } from "./presets";
 import { getLook, parseLook, setLook, updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
-import { buildIcon, ERROR_NOT_SVG, type IconGeometry } from "./svgIcon";
+import { buildIcon, buildIconYielding, ERROR_NOT_SVG, type IconGeometry } from "./svgIcon";
 import { exportGlb } from "./glb";
 import { createPngRenderer } from "./renderPng";
 import { renderSpin } from "./renderSpin";
@@ -13,6 +13,7 @@ import { hasWebGL2, iconGeometry, Viewport, type Toast } from "./Viewport";
 
 const CUSTOM_ID = "custom";
 const TOAST_MS = 6000;
+const BUILDING_REVEAL_MS = 100;
 const BAD_LOOK = "That look file couldn't be read. Nothing was changed.";
 const EXPORT_FAILED = "Export failed. Try again.";
 const NO_VIDEO = "This browser can't record video. Try Chrome or Firefox.";
@@ -36,7 +37,17 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url));
 }
 
-const doneMessage = (ok: number, failed: number) => (failed > 0 ? `Exported ${ok} icons. ${failed} skipped.` : `Exported ${ok} icons.`);
+const doneMessage = (ok: number, failed: number) => {
+  const exported = `Exported ${ok} ${ok === 1 ? "icon" : "icons"}.`;
+  return failed > 0 ? `${exported} ${failed} skipped.` : exported;
+};
+
+function afterPaint(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    let frame = requestAnimationFrame(() => (frame = requestAnimationFrame(() => resolve())));
+    signal.addEventListener("abort", () => (cancelAnimationFrame(frame), resolve()), { once: true });
+  });
+}
 const zip = (data: Uint8Array) => new Blob([data as BlobPart], { type: "application/zip" });
 
 type ExportButtonProps = { kind: ExportKind; exporting: Exporting | null; disabled?: boolean; helper?: boolean; onClick: () => void; children: string };
@@ -119,12 +130,14 @@ export function App() {
   const nothingSelected = useLook(({ export: { sizes, scales } }) => sizes.length === 0 || scales.length === 0);
   const [spinCodec, setSpinCodec] = useState<SpinCodec | null | undefined>(undefined);
   const runningJob = useRef<AbortController | null>(null);
+  const pendingSvg = useRef<AbortController | null>(null);
 
   useEffect(
     () => () => {
       const job = runningJob.current;
       runningJob.current = null;
       job?.abort();
+      pendingSvg.current?.abort();
     },
     [],
   );
@@ -142,21 +155,28 @@ export function App() {
     toastCount.current += 1;
     setToast(message ? { id: toastCount.current, message } : null);
   };
-  const loadSvg = (text: string, name = "icon") => {
-    setBuilding(true);
-    requestAnimationFrame(() =>
-      setTimeout(() => {
-        setBuilding(false);
-        const result = buildIcon(text);
-        if (!result.ok) {
-          showToast(result.error);
-          return;
-        }
-        setCustomIcon({ name, geometry: result });
-        setIcon({ id: CUSTOM_ID, name, geometry: result });
-        showToast(result.warning);
-      }),
-    );
+  const loadSvg = async (text: string, name = "icon") => {
+    pendingSvg.current?.abort();
+    const controller = new AbortController();
+    pendingSvg.current = controller;
+    const { signal } = controller;
+    const reveal = setTimeout(() => setBuilding(true), BUILDING_REVEAL_MS);
+    signal.addEventListener("abort", () => clearTimeout(reveal), { once: true });
+    await afterPaint(signal);
+    const result = await buildIconYielding(text, signal).finally(() => {
+      if (signal.aborted) return;
+      clearTimeout(reveal);
+      pendingSvg.current = null;
+      setBuilding(false);
+    });
+    if (!result) return;
+    if (!result.ok) {
+      showToast(result.error);
+      return;
+    }
+    setCustomIcon({ name, geometry: result });
+    setIcon({ id: CUSTOM_ID, name, geometry: result });
+    showToast(result.warning);
   };
   const loadLook = (text: string) => {
     const look = parseLook(text);
@@ -272,15 +292,18 @@ export function App() {
     }
   };
 
-  const exportPng = () =>
-    runExport("png", () =>
+  const exportPng = () => {
+    if (nothingSelected) return;
+    return runExport("png", () =>
       withPngRenderer(async (look, render) => {
         const slug = iconSlug(icon.name);
         download(zip(await exportIcon(slug, icon.geometry, look.export, render)), `${slug}.zip`);
       }),
     );
+  };
 
   const exportSetZip = () => {
+    if (nothingSelected) return;
     const items = setItems;
     const filename = `${iconSlug(setLabel.replace(/^Export | \(.*$/g, ""))}.zip`;
     return runExport("set", ({ signal, update }) =>
@@ -299,7 +322,7 @@ export function App() {
       update({ seconds: 0 });
       const look = getLook();
       const video = await abortable(renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }), signal), signal);
-      download(video, "icon-spin.webm");
+      download(video, `${iconSlug(icon.name)}-spin.webm`);
     });
 
   const exportGlbFile = () =>
@@ -308,7 +331,7 @@ export function App() {
       const geometry = iconGeometry(icon.geometry, shape);
       try {
         const glb = await exportGlb(geometry, [shape.scaleX / 100, shape.scaleY / 100, 1], material);
-        download(new Blob([glb], { type: "model/gltf-binary" }), "icon.glb");
+        download(new Blob([glb], { type: "model/gltf-binary" }), `${iconSlug(icon.name)}.glb`);
       } finally {
         geometry.dispose();
       }

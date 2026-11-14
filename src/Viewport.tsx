@@ -387,10 +387,10 @@ export function Viewport({ icon, building, dragging, toast, spin, onSpinChange }
           <Scene icon={icon} spin={spin} />
         </Canvas>
       </div>
-      {building ? (
-        <div className="viewport-status viewport-building">{BUILDING_ICON}</div>
-      ) : (
-        loading && <div className="viewport-status">{LOADING_LIGHTING}</div>
+      {(building || loading) && (
+        <div className="viewport-status" aria-live="polite">
+          {building ? BUILDING_ICON : LOADING_LIGHTING}
+        </div>
       )}
       {dragging && <div className="viewport-drop">{DROP_OVERLAY}</div>}
       {toast && (

@@ -14,8 +14,6 @@ vi.mock("@react-three/fiber", async (original) => ({ ...(await original<typeof i
 
 const { App } = await import("./App");
 
-const VALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10'/></svg>";
-
 let root: Root;
 let container: HTMLDivElement;
 
@@ -89,13 +87,22 @@ describe("Viewport keyboard", () => {
 });
 
 describe("Loading", () => {
-  it("shows Building icon… in the viewport while a pasted SVG builds", () => {
+  it("shows Building icon… during a slow SVG build and clears it when the build ends", async () => {
+    vi.useRealTimers();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    const rings = Array.from({ length: 24 }, (_, i) => `<circle cx="${(i % 12) * 8 + 4}" cy="${Math.floor(i / 12) * 8 + 4}" r="6" fill="none" stroke="black" stroke-width="1.5"/>`);
+    const slowSvg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20'>${rings.join("")}</svg>`;
+    const status = () => container.querySelector(".viewport-status")?.textContent ?? "";
+    const started = performance.now();
     const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", { value: { getData: () => VALID_SVG } });
-    act(() => document.body.dispatchEvent(event));
-    expect(container.querySelector(".viewport")?.textContent).toContain("Building icon…");
-    act(() => vi.advanceTimersByTime(50));
-    expect(container.querySelector(".viewport")?.textContent).not.toContain("Building icon…");
-    expect(container.querySelector<HTMLSelectElement>("#icon-select")?.value).toBe("custom");
-  });
+    Object.defineProperty(event, "clipboardData", { value: { getData: () => slowSvg } });
+    document.body.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(status()).toBe("");
+    await vi.waitFor(() => expect(status()).toBe("Building icon…"), { timeout: 5000, interval: 5 });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(100);
+    expect(container.querySelector(".viewport-status")?.getAttribute("aria-live")).toBe("polite");
+    await vi.waitFor(() => expect(container.querySelector<HTMLSelectElement>("#icon-select")?.value).toBe("custom"), { timeout: 20000, interval: 20 });
+    expect(status()).toBe("");
+  }, 30000);
 });

@@ -53,9 +53,10 @@ function strokeWidthOf(outline: paper.PathItem): number {
   return perimeter > 0 ? (2 * Math.abs((outline as paper.Path).area)) / perimeter : Infinity;
 }
 
-function toPaperPaths(svg: string): paper.PathItem[] {
+function* toPaperPaths(svg: string): Generator<void, paper.PathItem[]> {
   const outlines: paper.PathItem[] = [];
   for (const shapePath of new SVGLoader().parse(svg).paths) {
+    yield;
     const style = shapePath.userData?.style as SvgStyle;
     const filled = style.fill !== "none" && style.fill !== "transparent";
     const stroked = style.stroke !== undefined && style.stroke !== "none" && style.strokeWidth > 0;
@@ -74,7 +75,7 @@ function toPaperPaths(svg: string): paper.PathItem[] {
   return outlines;
 }
 
-export function buildIcon(svgText: string): IconResult {
+function* buildSteps(svgText: string): Generator<void, IconResult> {
   if (new Blob([svgText]).size > MAX_SVG_BYTES) return { ok: false, error: ERROR_TOO_LARGE };
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
@@ -84,11 +85,12 @@ export function buildIcon(svgText: string): IconResult {
   const skipped = [...root.querySelectorAll(SKIPPED_SELECTOR)].filter(isExternalUse);
   for (const element of skipped) element.remove();
 
-  const outlines = toPaperPaths(new XMLSerializer().serializeToString(root));
-  const united = outlines.reduce<paper.PathItem | null>(
-    (acc, item) => (acc ? acc.unite(item, { insert: false }) : item),
-    null,
-  ) as paper.Path | paper.CompoundPath | null;
+  const outlines = yield* toPaperPaths(new XMLSerializer().serializeToString(root));
+  let united: paper.Path | paper.CompoundPath | null = null;
+  for (const item of outlines) {
+    yield;
+    united = (united ? united.unite(item, { insert: false }) : item) as paper.Path | paper.CompoundPath;
+  }
   if (!united || Math.abs(united.area) < 1e-9 || united.bounds.width === 0 || united.bounds.height === 0) {
     return { ok: false, error: ERROR_NO_SHAPES };
   }
@@ -106,4 +108,26 @@ export function buildIcon(svgText: string): IconResult {
   if (shapes.length === 0) return { ok: false, error: ERROR_NO_SHAPES };
 
   return skipped.length > 0 ? { ok: true, shapes, thinnest, warning: WARNING_SKIPPED } : { ok: true, shapes, thinnest };
+}
+
+export function buildIcon(svgText: string): IconResult {
+  const steps = buildSteps(svgText);
+  for (let step = steps.next(); ; step = steps.next()) if (step.done) return step.value;
+}
+
+const FRAME_BUDGET_MS = 12;
+
+export async function buildIconYielding(svgText: string, signal: AbortSignal): Promise<IconResult | null> {
+  const steps = buildSteps(svgText);
+  let sliceStart = performance.now();
+  for (let step = steps.next(); ; step = steps.next()) {
+    if (signal.aborted) return null;
+    if (step.done) return step.value;
+    if (performance.now() - sliceStart < FRAME_BUDGET_MS) continue;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve);
+      signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+    });
+    sliceStart = performance.now();
+  }
 }
