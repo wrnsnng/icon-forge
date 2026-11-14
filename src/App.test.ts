@@ -40,7 +40,7 @@ vi.mock("./Viewport", async (original) => ({
     ),
 }));
 
-type HeldBuild = { release: () => void; fail: (error: Error) => void };
+type HeldBuild = { release: () => void; fail: (error: Error) => void; signal: AbortSignal };
 let heldBuilds: HeldBuild[] | null = null;
 vi.mock("./svgIcon", async (original) => {
   const real = await original<typeof import("./svgIcon")>();
@@ -49,7 +49,7 @@ vi.mock("./svgIcon", async (original) => {
     buildIconYielding: async (text: string, signal: AbortSignal) => {
       if (!heldBuilds) return real.buildIconYielding(text, signal);
       const builds = heldBuilds;
-      await new Promise<void>((release, fail) => builds.push({ release, fail }));
+      await new Promise<void>((release, fail) => builds.push({ release, fail, signal }));
       return real.buildIcon(text);
     },
   };
@@ -165,6 +165,49 @@ describe("App input errors", () => {
     };
     beforeEach(() => {
       heldBuilds = [];
+    });
+
+    it("shows Building icon… from the 100 ms reveal until a long build settles", async () => {
+      await startHeldBuild(VALID_SVG);
+      await act(async () => vi.advanceTimersByTimeAsync(49));
+      expect(building()).toBeNull();
+      await act(async () => vi.advanceTimersByTimeAsync(1));
+      expect(building()).toBe("Building icon…");
+      await act(async () => vi.advanceTimersByTimeAsync(10_000));
+      expect(building()).toBe("Building icon…");
+      await act(async () => heldBuilds?.[0]?.release());
+      expect(building()).toBeNull();
+      expect(iconSelect()?.value).toBe("custom");
+    });
+
+    it("aborts a build that has shown Building icon… on unmount and settles it with no state update", async () => {
+      await startHeldBuild(VALID_SVG);
+      await act(async () => vi.advanceTimersByTimeAsync(100));
+      expect(building()).toBe("Building icon…");
+      act(() => root.unmount());
+      dispatchesAfterUnmount = 0;
+      expect(heldBuilds?.[0]?.signal.aborted).toBe(true);
+      await act(async () => {
+        heldBuilds?.[0]?.release();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(dispatchesAfterUnmount).toBe(0);
+      dispatchesAfterUnmount = null;
+      mount();
+    });
+
+    it("ignores a replaced build that rejects, and lands the build that replaced it", async () => {
+      await startHeldBuild(INVALID_SVG);
+      await act(async () => vi.advanceTimersByTimeAsync(100));
+      await startHeldBuild(VALID_SVG);
+      await act(async () => heldBuilds?.[0]?.fail(new Error("boolean operation failed")));
+      expect(alertText()).toBeNull();
+      expect(building()).toBe("Building icon…");
+      expect(iconSelect()?.value).toBe("zest/SparklesIcon");
+      await act(async () => heldBuilds?.[1]?.release());
+      expect(building()).toBeNull();
+      expect(alertText()).toBeNull();
+      expect(iconSelect()?.value).toBe("custom");
     });
 
     it("drops a replaced build's result after it has yielded", async () => {

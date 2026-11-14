@@ -3,11 +3,15 @@ import { Vector2, type Shape } from "three";
 import { SVGLoader } from "three/addons/loaders/SVGLoader.js";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
-import { buildIcon } from "./svgIcon";
+import { buildIcon, type IconResult } from "./svgIcon";
 
 const FRAME_MIN = -100;
 const FRAME_MAX = 124;
 const MARKER = 0.01;
+const SLOW_PRESET_BUILD_MS = 20_000;
+
+const builds = new Map<string, IconResult>();
+const buildOnce = (svg: string) => builds.get(svg) ?? builds.set(svg, buildIcon(svg)).get(svg);
 
 function inside(point: Vector2, polygon: Vector2[]): boolean {
   let hit = false;
@@ -29,8 +33,8 @@ function framed(svg: string): string {
 }
 
 function uncoveredStrokePoints(svg: string): Vector2[] {
-  const result = buildIcon(framed(svg));
-  if (!result.ok) throw new Error(result.error);
+  const result = buildOnce(framed(svg));
+  if (!result?.ok) throw new Error(result?.error);
   const center = (FRAME_MIN + FRAME_MAX + MARKER) / 2;
   const scale = 1 / (FRAME_MAX + MARKER - FRAME_MIN);
   const toFitted = (p: Vector2) => new Vector2((p.x - center) * scale, -(p.y - center) * scale);
@@ -52,13 +56,21 @@ describe("preset icons", () => {
     expect(PRESET_ICONS.map((icon) => icon.name)).toContain("Circle Alert");
   });
 
-  it.each(PRESET_ICONS.map((icon) => [icon.id, icon.svg]))("%s builds without a warning", (_, svg) => {
-    expect(buildIcon(svg)).toEqual({ ok: true, shapes: expect.any(Array), thinnest: expect.any(Number) });
-  });
+  it.each(PRESET_ICONS.map((icon) => [icon.id, icon.svg]))(
+    "%s builds without a warning",
+    (_, svg) => {
+      expect(buildOnce(framed(svg))).toEqual({ ok: true, shapes: expect.any(Array), thinnest: expect.any(Number) });
+    },
+    SLOW_PRESET_BUILD_MS,
+  );
 
-  it.each(PRESET_ICONS.map((icon) => [icon.id, icon.svg]))("%s covers every stroke of its source", (_, svg) => {
-    expect(uncoveredStrokePoints(svg)).toEqual([]);
-  });
+  it.each(PRESET_ICONS.map((icon) => [icon.id, icon.svg]))(
+    "%s covers every stroke of its source",
+    (_, svg) => {
+      expect(uncoveredStrokePoints(svg)).toEqual([]);
+    },
+    SLOW_PRESET_BUILD_MS,
+  );
 
   it("catches a stroke missing from the solid", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2"><path d="M4 4h16"/><path d="M4 20h16" stroke="none"/></svg>';

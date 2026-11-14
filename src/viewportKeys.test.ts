@@ -10,6 +10,20 @@ vi.hoisted(() => {
     return type === "webgl2" ? { getExtension: () => null } : getContext.call(this, type as "2d", ...(rest as []));
   } as HTMLCanvasElement["getContext"];
 });
+const VALID_SVG = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><rect width='10' height='10'/></svg>";
+let heldBuilds: (() => void)[] | null = null;
+vi.mock("./svgIcon", async (original) => {
+  const real = await original<typeof import("./svgIcon")>();
+  return {
+    ...real,
+    buildIconYielding: async (text: string, signal: AbortSignal) => {
+      if (!heldBuilds) return real.buildIconYielding(text, signal);
+      const builds = heldBuilds;
+      await new Promise<void>((release) => builds.push(release));
+      return real.buildIcon(text);
+    },
+  };
+});
 vi.mock("@react-three/fiber", async (original) => ({ ...(await original<typeof import("@react-three/fiber")>()), Canvas: () => null }));
 
 const { App } = await import("./App");
@@ -18,6 +32,7 @@ let root: Root;
 let container: HTMLDivElement;
 
 beforeEach(() => {
+  heldBuilds = null;
   setLook(DEFAULT_LOOK);
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -86,29 +101,20 @@ describe("Viewport keyboard", () => {
   });
 });
 
-const ringsSvg = () =>
-  `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 20'>${Array.from({ length: 24 }, (_, i) => `<circle cx="${(i % 12) * 8 + 4}" cy="${Math.floor(i / 12) * 8 + 4}" r="6" fill="none" stroke="black" stroke-width="1.5"/>`).join("")}</svg>`;
-const onePathSvg = () =>
-  `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><path fill="none" stroke="black" stroke-width="1.5" d="${Array.from({ length: 100 }, (_, i) => `M${(i % 10) * 10 + 2} ${Math.floor(i / 10) * 10 + 2}l6 0l-3 6z`).join("")}"/></svg>`;
-
 describe("Loading", () => {
-  it.each([
-    ["24 separate circles", ringsSvg],
-    ["one path with 100 subpaths", onePathSvg],
-  ])("shows Building icon… during a slow build of %s and clears it when the build ends", async (_, slowSvg) => {
-    vi.useRealTimers();
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
-    const status = () => container.querySelector(".viewport-status")?.textContent ?? "";
-    const started = performance.now();
+  it("shows Building icon… as a polite live status after 100 ms of a build and clears it when the build settles", async () => {
+    const status = () => container.querySelector(".viewport-status");
+    heldBuilds = [];
     const event = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "clipboardData", { value: { getData: slowSvg } });
-    document.body.dispatchEvent(event);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(status()).toBe("");
-    await vi.waitFor(() => expect(status()).toBe("Building icon…"), { timeout: 5000, interval: 5 });
-    expect(performance.now() - started).toBeGreaterThanOrEqual(100);
-    expect(container.querySelector(".viewport-status")?.getAttribute("aria-live")).toBe("polite");
-    await vi.waitFor(() => expect(container.querySelector<HTMLSelectElement>("#icon-select")?.value).toBe("custom"), { timeout: 20000, interval: 20 });
-    expect(status()).toBe("");
-  }, 30000);
+    Object.defineProperty(event, "clipboardData", { value: { getData: () => VALID_SVG } });
+    act(() => document.body.dispatchEvent(event));
+    await act(async () => vi.advanceTimersByTimeAsync(99));
+    expect(status()).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(status()?.textContent).toBe("Building icon…");
+    expect(status()?.getAttribute("aria-live")).toBe("polite");
+    await act(async () => heldBuilds?.[0]?.());
+    expect(status()).toBeNull();
+    expect(container.querySelector<HTMLSelectElement>("#icon-select")?.value).toBe("custom");
+  });
 });

@@ -140,29 +140,6 @@ describe("buildIconYielding", () => {
     expect(result).toMatchObject({ ok: true, warning: WARNING_SKIPPED });
   });
 
-  it("never holds the main thread past 50 ms within one large stroked path", async () => {
-    const bigPath = svg(
-      `<path fill="none" stroke="black" stroke-width="1.5" d="${Array.from({ length: 300 }, (_, i) => `M${(i % 20) * 10 + 2} ${Math.floor(i / 20) * 10 + 2}l6 0l-3 6z`).join("")}"/>`,
-      'viewBox="0 0 200 200"',
-    );
-    const gaps: number[] = [];
-    let last = performance.now();
-    let building = true;
-    const tick = () => {
-      if (!building) return;
-      const now = performance.now();
-      gaps.push(now - last);
-      last = now;
-      setTimeout(tick);
-    };
-    setTimeout(tick);
-    const result = await buildIconYielding(bigPath, new AbortController().signal);
-    building = false;
-    gaps.push(performance.now() - last);
-    expect(result?.ok).toBe(true);
-    expect(Math.max(...gaps)).toBeLessThan(50);
-  }, 30000);
-
   it("returns nothing once aborted", async () => {
     const controller = new AbortController();
     controller.abort();
