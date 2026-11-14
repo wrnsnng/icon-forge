@@ -7,7 +7,7 @@ import { CAMERA_FOV, cameraPosition, loadStudioEnvironment, LookScene } from "./
 
 const SUPERSAMPLE = 4;
 
-class FailOnError extends Component<{ onError: (error: unknown) => void; children: ReactNode }> {
+export class FailOnError extends Component<{ onError: (error: unknown) => void; children: ReactNode }> {
   static getDerivedStateFromError() {
     return null;
   }
@@ -19,7 +19,7 @@ class FailOnError extends Component<{ onError: (error: unknown) => void; childre
   }
 }
 
-function Ready({ onReady }: { onReady: (state: RootState) => void }) {
+export function Ready({ onReady }: { onReady: (state: RootState) => void }) {
   const get = useThree((state) => state.get);
   useEffect(() => onReady(get()), [get, onReady]);
   return null;
