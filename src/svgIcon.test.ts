@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Box2, ShapeUtils, type Shape } from "three";
 import { describe, expect, it } from "vitest";
-import { ERROR_NO_SHAPES, ERROR_NOT_SVG, ERROR_TOO_LARGE, WARNING_SKIPPED, buildIcon } from "./svgIcon";
+import { ERROR_NO_SHAPES, ERROR_NOT_SVG, ERROR_TOO_LARGE, WARNING_SKIPPED, buildIcon, buildIconYielding, type IconResult } from "./svgIcon";
 
 const svg = (body: string, attrs = 'viewBox="0 0 24 24"') =>
   `<svg xmlns="http://www.w3.org/2000/svg" ${attrs}>${body}</svg>`;
@@ -115,5 +115,34 @@ describe("buildIcon builds shapes", () => {
   it("drops text and external references with a warning and keeps the rest", () => {
     const result = buildIcon(svg('<rect width="10" height="10"/><text>Hi</text><use href="other.svg#a"/>'));
     expect(result).toMatchObject({ ok: true, warning: WARNING_SKIPPED });
+  });
+});
+
+describe("buildIconYielding", () => {
+  const comparable = (result: IconResult | null) =>
+    result?.ok ? { ...result, shapes: result.shapes.map((shape) => [shape.getPoints(), shape.holes.map((hole) => hole.getPoints())]) } : result;
+  const onePath = svg(
+    `<path fill="none" stroke="black" stroke-width="1" d="${Array.from({ length: 30 }, (_, i) => `M${(i % 6) * 4 + 1} ${Math.floor(i / 6) * 4 + 1}l2 0l-1 2z`).join("")}"/>`,
+  );
+
+  it.each([
+    ["a filled rect", svg('<rect width="10" height="10"/>')],
+    ["one stroked path with 30 subpaths", onePath],
+    ["an SVG with skipped elements", svg('<rect width="10" height="10"/><text>Hi</text><use href="other.svg#a"/>')],
+    ["an SVG with no shapes", svg("<text>Hi</text>")],
+    ["text that is not SVG", "not svg"],
+  ])("gives the same result as buildIcon for %s", async (_, text) => {
+    expect(comparable(await buildIconYielding(text, new AbortController().signal))).toEqual(comparable(buildIcon(text)));
+  });
+
+  it("keeps the skipped-elements warning", async () => {
+    const result = await buildIconYielding(svg('<rect width="10" height="10"/><text>Hi</text>'), new AbortController().signal);
+    expect(result).toMatchObject({ ok: true, warning: WARNING_SKIPPED });
+  });
+
+  it("returns nothing once aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(await buildIconYielding(onePath, controller.signal)).toBeNull();
   });
 });

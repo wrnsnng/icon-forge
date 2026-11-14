@@ -53,14 +53,16 @@ function strokeWidthOf(outline: paper.PathItem): number {
   return perimeter > 0 ? (2 * Math.abs((outline as paper.Path).area)) / perimeter : Infinity;
 }
 
-function toPaperPaths(svg: string): paper.PathItem[] {
+function* toPaperPaths(svg: string): Generator<void, paper.PathItem[]> {
   const outlines: paper.PathItem[] = [];
   for (const shapePath of new SVGLoader().parse(svg).paths) {
+    yield;
     const style = shapePath.userData?.style as SvgStyle;
     const filled = style.fill !== "none" && style.fill !== "transparent";
     const stroked = style.stroke !== undefined && style.stroke !== "none" && style.strokeWidth > 0;
     const fill = new paper.CompoundPath({ insert: false, fillRule: style.fillRule === "evenodd" ? "evenodd" : "nonzero" });
     for (const subPath of shapePath.subPaths) {
+      yield;
       const points = subPath.getPoints(CURVE_DIVISIONS).map((p) => new paper.Point(p.x, p.y));
       const first = points[0];
       const last = points[points.length - 1];
@@ -69,26 +71,29 @@ function toPaperPaths(svg: string): paper.PathItem[] {
       if (filled) fill.addChild(new paper.Path({ segments: points, closed: true, insert: false }));
       if (stroked) outlines.push(outlineStroke(points, closed, style));
     }
+    yield;
     if (fill.children.length > 0) outlines.push(fill.unite(new paper.Path({ insert: false }), { insert: false }));
   }
   return outlines;
 }
 
-export function buildIcon(svgText: string): IconResult {
+function* buildSteps(svgText: string): Generator<void, IconResult> {
   if (new Blob([svgText]).size > MAX_SVG_BYTES) return { ok: false, error: ERROR_TOO_LARGE };
 
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  yield;
   const root = doc.documentElement;
   if (doc.querySelector("parsererror") || root.localName !== "svg") return { ok: false, error: ERROR_NOT_SVG };
 
   const skipped = [...root.querySelectorAll(SKIPPED_SELECTOR)].filter(isExternalUse);
   for (const element of skipped) element.remove();
 
-  const outlines = toPaperPaths(new XMLSerializer().serializeToString(root));
-  const united = outlines.reduce<paper.PathItem | null>(
-    (acc, item) => (acc ? acc.unite(item, { insert: false }) : item),
-    null,
-  ) as paper.Path | paper.CompoundPath | null;
+  const outlines = yield* toPaperPaths(new XMLSerializer().serializeToString(root));
+  let united: paper.Path | paper.CompoundPath | null = null;
+  for (const item of outlines) {
+    yield;
+    united = (united ? united.unite(item, { insert: false }) : item) as paper.Path | paper.CompoundPath;
+  }
   if (!united || Math.abs(united.area) < 1e-9 || united.bounds.width === 0 || united.bounds.height === 0) {
     return { ok: false, error: ERROR_NO_SHAPES };
   }
@@ -99,6 +104,7 @@ export function buildIcon(svgText: string): IconResult {
   united.translate(center.multiply(-1));
   united.scale(scale, -scale, new paper.Point(0, 0));
 
+  yield;
   const pathData = united.pathData;
   const shapes = new SVGLoader()
     .parse(`<svg xmlns="http://www.w3.org/2000/svg"><path d="${pathData}"/></svg>`)
@@ -106,4 +112,26 @@ export function buildIcon(svgText: string): IconResult {
   if (shapes.length === 0) return { ok: false, error: ERROR_NO_SHAPES };
 
   return skipped.length > 0 ? { ok: true, shapes, thinnest, warning: WARNING_SKIPPED } : { ok: true, shapes, thinnest };
+}
+
+export function buildIcon(svgText: string): IconResult {
+  const steps = buildSteps(svgText);
+  for (let step = steps.next(); ; step = steps.next()) if (step.done) return step.value;
+}
+
+const FRAME_BUDGET_MS = 12;
+
+export async function buildIconYielding(svgText: string, signal: AbortSignal): Promise<IconResult | null> {
+  const steps = buildSteps(svgText);
+  let sliceStart = performance.now();
+  for (let step = steps.next(); ; step = steps.next()) {
+    if (signal.aborted) return null;
+    if (step.done) return step.value;
+    if (performance.now() - sliceStart < FRAME_BUDGET_MS) continue;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve);
+      signal.addEventListener("abort", () => (clearTimeout(timer), resolve()), { once: true });
+    });
+    sliceStart = performance.now();
+  }
 }

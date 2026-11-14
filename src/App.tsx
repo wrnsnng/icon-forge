@@ -4,7 +4,7 @@ import { exportIcon, exportSet, iconSlug, type RenderPng, type SetItem } from ".
 import { BACKGROUND_SWATCHES, COLOUR_SWATCHES } from "./presets";
 import { getLook, parseLook, setLook, updateLook, useLook, type Look } from "./look";
 import { DEFAULT_ICON_ID, PRESET_ICONS, SELEKT_GROUP, ZEST_GROUP } from "./presetIcons";
-import { buildIcon, ERROR_NOT_SVG, type IconGeometry } from "./svgIcon";
+import { buildIcon, buildIconYielding, ERROR_NOT_SVG, type IconGeometry, type IconResult } from "./svgIcon";
 import { exportGlb } from "./glb";
 import { createPngRenderer } from "./renderPng";
 import { renderSpin } from "./renderSpin";
@@ -13,6 +13,7 @@ import { hasWebGL2, iconGeometry, Viewport, type Toast } from "./Viewport";
 
 const CUSTOM_ID = "custom";
 const TOAST_MS = 6000;
+const BUILDING_REVEAL_MS = 100;
 const BAD_LOOK = "That look file couldn't be read. Nothing was changed.";
 const EXPORT_FAILED = "Export failed. Try again.";
 const NO_VIDEO = "This browser can't record video. Try Chrome or Firefox.";
@@ -23,7 +24,6 @@ type ExportKind = "png" | "set" | "spin" | "glb";
 type Exporting = { kind: ExportKind; controller: AbortController; progress?: { n: number; total: number }; seconds?: number };
 type Job = { signal: AbortSignal; update: (patch: Pick<Exporting, "progress" | "seconds">) => void };
 
-const NOTHING_SELECTED = "Select at least one size and scale.";
 const SET_LABELS: Record<string, string> = { [ZEST_GROUP]: "Export Zest set", [SELEKT_GROUP]: "Export Selekt-2 set" };
 const SIZES: Look["export"]["sizes"] = [16, 20, 24];
 const SCALES: Look["export"]["scales"] = [1, 2, 4];
@@ -37,7 +37,17 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url));
 }
 
-const doneMessage = (ok: number, failed: number) => (failed > 0 ? `Exported ${ok} icons. ${failed} skipped.` : `Exported ${ok} icons.`);
+const doneMessage = (ok: number, failed: number) => {
+  const exported = `Exported ${ok} ${ok === 1 ? "icon" : "icons"}.`;
+  return failed > 0 ? `${exported} ${failed} skipped.` : exported;
+};
+
+function afterPaint(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    let frame = requestAnimationFrame(() => (frame = requestAnimationFrame(() => resolve())));
+    signal.addEventListener("abort", () => (cancelAnimationFrame(frame), resolve()), { once: true });
+  });
+}
 const zip = (data: Uint8Array) => new Blob([data as BlobPart], { type: "application/zip" });
 
 type ExportButtonProps = { kind: ExportKind; exporting: Exporting | null; disabled?: boolean; helper?: boolean; onClick: () => void; children: string };
@@ -47,7 +57,7 @@ function ExportButton({ kind, exporting, disabled = false, helper = false, onCli
     <button
       type="button"
       onClick={onClick}
-      disabled={exporting !== null || disabled}
+      disabled={!hasWebGL2 || exporting !== null || disabled}
       aria-busy={exporting?.kind === kind}
       aria-describedby={helper ? `export-${kind}-helper` : undefined}
     >
@@ -108,6 +118,7 @@ export function App() {
   const [toast, setToast] = useState<Toast | null>(null);
   const toastCount = useRef(0);
   const [dragging, setDragging] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [spin, setSpin] = useState(() => !window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const material = useLook((look) => look.material.type);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -119,12 +130,14 @@ export function App() {
   const nothingSelected = useLook(({ export: { sizes, scales } }) => sizes.length === 0 || scales.length === 0);
   const [spinCodec, setSpinCodec] = useState<SpinCodec | null | undefined>(undefined);
   const runningJob = useRef<AbortController | null>(null);
+  const pendingSvg = useRef<AbortController | null>(null);
 
   useEffect(
     () => () => {
       const job = runningJob.current;
       runningJob.current = null;
       job?.abort();
+      pendingSvg.current?.abort();
     },
     [],
   );
@@ -142,8 +155,19 @@ export function App() {
     toastCount.current += 1;
     setToast(message ? { id: toastCount.current, message } : null);
   };
-  const loadSvg = (text: string, name = "icon") => {
-    const result = buildIcon(text);
+  const loadSvg = async (text: string, name = "icon") => {
+    pendingSvg.current?.abort();
+    const controller = new AbortController();
+    pendingSvg.current = controller;
+    const { signal } = controller;
+    const reveal = setTimeout(() => setBuilding(true), BUILDING_REVEAL_MS);
+    signal.addEventListener("abort", () => clearTimeout(reveal), { once: true });
+    await afterPaint(signal);
+    const result = await buildIconYielding(text, signal).catch((): IconResult => ({ ok: false, error: ERROR_NOT_SVG }));
+    if (signal.aborted || !result) return;
+    clearTimeout(reveal);
+    pendingSvg.current = null;
+    setBuilding(false);
     if (!result.ok) {
       showToast(result.error);
       return;
@@ -266,15 +290,18 @@ export function App() {
     }
   };
 
-  const exportPng = () =>
-    runExport("png", () =>
+  const exportPng = () => {
+    if (nothingSelected) return;
+    return runExport("png", () =>
       withPngRenderer(async (look, render) => {
         const slug = iconSlug(icon.name);
         download(zip(await exportIcon(slug, icon.geometry, look.export, render)), `${slug}.zip`);
       }),
     );
+  };
 
   const exportSetZip = () => {
+    if (nothingSelected) return;
     const items = setItems;
     const filename = `${iconSlug(setLabel.replace(/^Export | \(.*$/g, ""))}.zip`;
     return runExport("set", ({ signal, update }) =>
@@ -293,7 +320,7 @@ export function App() {
       update({ seconds: 0 });
       const look = getLook();
       const video = await abortable(renderSpin(icon.geometry, look, spinBackground(look).hex, spinCodec, (seconds) => update({ seconds }), signal), signal);
-      download(video, "icon-spin.webm");
+      download(video, `${iconSlug(icon.name)}-spin.webm`);
     });
 
   const exportGlbFile = () =>
@@ -302,7 +329,7 @@ export function App() {
       const geometry = iconGeometry(icon.geometry, shape);
       try {
         const glb = await exportGlb(geometry, [shape.scaleX / 100, shape.scaleY / 100, 1], material);
-        download(new Blob([glb], { type: "model/gltf-binary" }), "icon.glb");
+        download(new Blob([glb], { type: "model/gltf-binary" }), `${iconSlug(icon.name)}.glb`);
       } finally {
         geometry.dispose();
       }
@@ -321,7 +348,7 @@ export function App() {
   return (
     <main className="app">
       <h1 className="visually-hidden">Icon Forge</h1>
-      <Viewport icon={icon.geometry} dragging={dragging} toast={toast} spin={spin} onSpinChange={setSpin} />
+      <Viewport icon={icon.geometry} building={building} dragging={dragging} toast={toast} spin={spin} onSpinChange={setSpin} />
       <aside className="panel">
         <section className="panel-section">
           <h2>Preset</h2>
@@ -415,7 +442,6 @@ export function App() {
           <h2>Export</h2>
           <CheckboxGroup legend="Sizes (px)" field="sizes" options={SIZES} format={(size) => String(size)} />
           <CheckboxGroup legend="Scales" field="scales" options={SCALES} format={(scale) => `${scale}x`} />
-          {nothingSelected && <p className="helper">{NOTHING_SELECTED}</p>}
           <div className="export-actions">
             <ExportButton kind="png" exporting={exporting} disabled={nothingSelected} onClick={exportPng}>
               Export PNG
@@ -446,13 +472,13 @@ export function App() {
               Cancel
             </button>
           )}
-          <ExportButton kind="spin" exporting={exporting} disabled={!hasWebGL2 || !spinCodec} helper onClick={exportSpin}>
+          <ExportButton kind="spin" exporting={exporting} disabled={!spinCodec} helper onClick={exportSpin}>
             Export spin
           </ExportButton>
           <p id="export-spin-helper" className="helper" aria-live="polite">
             {spinText}
           </p>
-          <ExportButton kind="glb" exporting={exporting} disabled={!hasWebGL2} helper onClick={exportGlbFile}>
+          <ExportButton kind="glb" exporting={exporting} helper onClick={exportGlbFile}>
             Export GLB
           </ExportButton>
           <p id="export-glb-helper" className="helper">
